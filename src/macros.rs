@@ -71,6 +71,12 @@ macro_rules! sys {
             Ok(drop(alias))
         })
     }};
+    (get_alias => $lua:expr) => {{
+        $lua.create_function(|_, var: String| {
+            let alias = crate::ALIASES.lock().expect("Able to lock aliases");
+            Ok(alias.get(&var).map(|v| v.to_string()).unwrap_or_default())
+        })
+    }};
     (path_join => $lua:expr) => {{
         $lua.create_function(|_, parts: Vec<String>| Ok(std::path::Path::new(&parts[0]).join(&parts[1..].join("/")).to_string_lossy().into_owned()))
     }};
@@ -166,15 +172,21 @@ macro_rules! sys {
         })
     }};
     (realpath => $lua:expr) => {{
-        $lua.create_function(|_, path: String| {
-            let canonical = fs::canonicalize(path)?;
+        $lua.create_function(|_, path: Option<String>| {
+            let canonical = fs::canonicalize(path.unwrap_or_else(|| ".".to_string()))?;
             Ok(canonical.to_string_lossy().into_owned())
         })
     }};
     (dirname => $lua:expr) => {{
-        $lua.create_function(|_, path: String| {
-            let path = PathBuf::from(path);
+        $lua.create_function(|_, path: Option<String>| {
+            let path = PathBuf::from(path.unwrap_or_else(|| ".".to_string()));
             Ok(path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| ".".to_string()))
+        })
+    }};
+    (pwd => $lua:expr) => {{
+        $lua.create_function(|_, ()| {
+            let path = env::current_dir()?;
+            Ok(path)
         })
     }};
 }

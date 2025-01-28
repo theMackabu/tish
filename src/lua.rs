@@ -1,10 +1,12 @@
+mod dump;
+
 use crate::prelude::*;
 use mlua::prelude::*;
 use parking_lot::RwLock;
 use sysinfo::System;
 
 use std::{
-    fs,
+    env, fs,
     path::PathBuf,
     process::Command,
     sync::Arc,
@@ -49,11 +51,14 @@ impl LuaState {
 
         register_functions!(
             globals,
+            "dump" => dump::create_function(&self.lua)?,
             "execute" => sys!(execute => self.lua)?,
             "getenv" => sys!(getenv => self.lua)?,
             "setenv" => sys!(setenv => self.lua)?,
             "alias" => sys!(set_alias => self.lua)?,
+            "getalias" => sys!(get_alias => self.lua)?,
             "path_join" => sys!(path_join => self.lua)?,
+            "pwd" => sys!(pwd => self.lua)?,
             "ls" => sys!(ls => self.lua)?,
             "mkdir" => sys!(mkdir => self.lua)?,
             "rm" => sys!(rm => self.lua)?,
