@@ -27,7 +27,7 @@ pub struct TishShell {
 }
 
 impl TishShell {
-    pub async fn new(args: TishArgs) -> anyhow::Result<Self> {
+    pub async fn new(args: TishArgs) -> Result<Self> {
         let mut shell = Self {
             args: args.to_owned(),
             lua: LuaState::new()?,
@@ -146,7 +146,7 @@ impl TishShell {
         return exit_code;
     }
 
-    pub async fn run(&mut self) -> anyhow::Result<ExitCode> {
+    pub async fn run(&mut self) -> Result<ExitCode> {
         let mut status = ExitCode::SUCCESS;
         let mut rl = AsyncLineReader::new()?;
         let mut sigint = signal(SignalKind::interrupt())?;
