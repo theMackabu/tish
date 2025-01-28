@@ -5,6 +5,7 @@ mod jobs;
 mod lua;
 mod macros;
 mod models;
+mod os;
 mod readline;
 mod shell;
 mod template;

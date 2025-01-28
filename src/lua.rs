@@ -33,7 +33,7 @@ impl LuaState {
         let lua = Lua::new();
 
         let config = Arc::new(RwLock::new(ShellConfig {
-            prompt: "%(user)@%(host) %(path) %(prompt) ".to_string(),
+            prompt: "{t.user}@{t.host} {t.cwd} {t.prompt} ".to_string(),
             lua_path: None,
             lua_cpath: None,
             history_size: 1000,

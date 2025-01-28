@@ -11,8 +11,8 @@ impl<'c> Template<'c> {
     pub fn new(template: &str) -> Self {
         Self {
             context: HashMap::new(),
-            start: "%(".to_string(),
-            end: ")".to_string(),
+            start: "{t.".to_string(),
+            end: "}".to_string(),
             template: template.to_string(),
         }
     }

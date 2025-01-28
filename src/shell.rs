@@ -2,6 +2,7 @@ use crate::{
     args::TishArgs,
     command::{LuaState, TishCommand},
     env::EnvManager,
+    os::user,
     prelude::*,
     readline::AsyncLineReader,
     template::Template,
@@ -96,15 +97,19 @@ impl TishShell {
             }
         }
 
+        // TODO: Rewrite this function to be much cleaner
         let pid = process::id().to_string();
-        let user = env::var("USER").unwrap_or_default().to_string();
         let host = hostname::get().unwrap().to_string_lossy().to_string();
         let path = env::current_dir().unwrap().to_string_lossy().to_string();
+        let current_dir = env::current_dir().unwrap().file_name().unwrap().to_string_lossy().to_string();
 
         template.insert("pid", pid);
-        template.insert("user", user);
+        template.insert("user", user::get_username().unwrap_or_default());
         template.insert("host", host);
-        template.insert("path", EnvManager::new(&path).contract_home());
+
+        // TODO: Improve ENVManager to be dynamic loaded, no need for new classes
+        template.insert("path", EnvManager::new(&current_dir).pretty_dir());
+        template.insert("cwd", EnvManager::new(&path).contract_home());
 
         if let Ok(symbol) = determine_prompt_symbol() {
             template.insert("prompt", symbol.to_string());

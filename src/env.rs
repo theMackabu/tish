@@ -1,3 +1,4 @@
+use crate::os::user;
 use std::path::PathBuf;
 
 pub struct EnvManager {
@@ -51,6 +52,18 @@ impl EnvManager {
         }
 
         std::env::var(&var_name).unwrap_or_default()
+    }
+
+    pub fn pretty_dir(&mut self) -> String {
+        let path = self.take_while(|c| !c.is_whitespace());
+
+        if let Ok(username) = user::get_username() {
+            if path == username {
+                return "~".to_string();
+            }
+        }
+
+        return path;
     }
 
     pub fn contract_home(&mut self) -> String {
