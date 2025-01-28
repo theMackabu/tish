@@ -1,3 +1,5 @@
+pub mod highlight;
+
 use crate::{
     args::TishArgs,
     command::{LuaState, TishCommand},

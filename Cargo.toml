@@ -15,7 +15,7 @@ hostname = "0.4.0"
 libc = "0.2.169"
 nix = "0.29.0"
 parking_lot = "0.12.3"
-rustyline = "15.0.0"
+rustyline = { version = "15.0.0", features = ["custom-bindings", "with-fuzzy"] }
 sysinfo = "0.33.1"
 
 tokio = { version = "1.43.0", features = ["full"] }

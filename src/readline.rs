@@ -1,8 +1,18 @@
+use crate::shell::highlight;
 use anyhow::Result;
-use rustyline::{error::ReadlineError, history::FileHistory, Editor};
 use tokio::sync::mpsc;
 
-type Readline = Editor<(), FileHistory>;
+use rustyline::{
+    completion::Completer,
+    error::ReadlineError,
+    highlight::{CmdKind, Highlighter, MatchingBracketHighlighter},
+    hint::{Hinter, HistoryHinter},
+    history::FileHistory,
+    validate::{MatchingBracketValidator, Validator},
+    Config, Context, Editor, Helper,
+};
+
+type Readline<T> = Editor<T, FileHistory>;
 type Receiver = Result<String, ReadlineError>;
 
 enum Operation {
@@ -17,12 +27,76 @@ pub struct AsyncLineReader {
     response_rx: mpsc::Receiver<Receiver>,
 }
 
+struct TishHelper {
+    hinter: HistoryHinter,
+    highlighter: highlight::Highlighter,
+    bracket_highlighter: MatchingBracketHighlighter,
+    validator: MatchingBracketValidator,
+}
+
+impl TishHelper {
+    fn new() -> Self {
+        Self {
+            hinter: HistoryHinter::new(),
+            highlighter: highlight::Highlighter::new(),
+            bracket_highlighter: MatchingBracketHighlighter::new(),
+            validator: MatchingBracketValidator::new(),
+        }
+    }
+}
+
+impl Helper for TishHelper {}
+
+impl Completer for TishHelper {
+    type Candidate = String;
+
+    fn complete(&self, _line: &str, _pos: usize, _ctx: &Context<'_>) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+        Ok((0, vec![]))
+    }
+}
+
+impl Hinter for TishHelper {
+    type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<String> {
+        self.hinter.hint(line, pos, ctx)
+    }
+}
+
+impl Validator for TishHelper {
+    fn validate(&self, ctx: &mut rustyline::validate::ValidationContext) -> rustyline::Result<rustyline::validate::ValidationResult> {
+        self.validator.validate(ctx)
+    }
+}
+
+impl Highlighter for TishHelper {
+    fn highlight<'l>(&self, line: &'l str, _: usize) -> std::borrow::Cow<'l, str> {
+        self.highlighter.highlight(line).into()
+    }
+
+    fn highlight_char(&self, line: &str, pos: usize, kind: CmdKind) -> bool {
+        self.bracket_highlighter.highlight_char(line, pos, kind)
+    }
+
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(&'s self, prompt: &'p str, default: bool) -> std::borrow::Cow<'b, str> {
+        if default {
+            std::borrow::Cow::Borrowed(prompt)
+        } else {
+            std::borrow::Cow::Owned(format!("\x1b[1;32m{}\x1b[0m", prompt))
+        }
+    }
+}
+
 impl AsyncLineReader {
     pub fn new() -> Result<Self> {
         let (request_tx, mut request_rx) = mpsc::channel::<Operation>(32);
         let (response_tx, response_rx) = mpsc::channel::<Receiver>(32);
 
-        let mut editor = Readline::new()?;
+        let helper = TishHelper::new();
+        let config = Config::builder().color_mode(rustyline::ColorMode::Enabled).build();
+
+        let mut editor: Readline<TishHelper> = Readline::with_config(config)?;
+        editor.set_helper(Some(helper));
 
         std::thread::spawn(move || {
             while let Some(prompt) = request_rx.blocking_recv() {

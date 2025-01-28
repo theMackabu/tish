@@ -25,13 +25,13 @@ impl TishCommand {
     pub fn parse(input: &str) -> Vec<Self> {
         let parse = |part| {
             let expanded = EnvManager::new(part).expand();
-            let mut tokens: Vec<&str> = expanded.trim().split_whitespace().collect();
+            let mut tokens = Self::tokenize(&expanded);
 
             if tokens.is_empty() {
                 return None;
             }
 
-            let background = tokens.last().map_or(false, |&last| last == "&");
+            let background = tokens.last().map_or(false, |last| last == "&");
             if background {
                 tokens.pop();
             }
@@ -186,5 +186,50 @@ impl TishCommand {
         let line = alias.get(&self.program).map(String::to_owned).unwrap_or_else(|| self.program.to_owned());
 
         TishCommand::parse(&line)
+    }
+
+    fn tokenize(input: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
+        let mut current_token = String::new();
+        let mut chars = input.chars().peekable();
+        let mut in_quotes = false;
+        let mut quote_char = None;
+        let mut escaped = false;
+
+        while let Some(c) = chars.next() {
+            if escaped {
+                current_token.push(c);
+                escaped = false;
+                continue;
+            }
+
+            match c {
+                '\\' => escaped = true,
+                '"' | '\'' => {
+                    if !in_quotes {
+                        in_quotes = true;
+                        quote_char = Some(c);
+                    } else if Some(c) == quote_char {
+                        in_quotes = false;
+                        quote_char = None;
+                    } else {
+                        current_token.push(c);
+                    }
+                }
+                c if c.is_whitespace() && !in_quotes => {
+                    if !current_token.is_empty() {
+                        tokens.push(current_token.clone());
+                        current_token.clear();
+                    }
+                }
+                _ => current_token.push(c),
+            }
+        }
+
+        if !current_token.is_empty() {
+            tokens.push(current_token);
+        }
+
+        tokens
     }
 }
