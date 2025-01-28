@@ -8,6 +8,7 @@ mod models;
 mod readline;
 mod shell;
 mod template;
+mod tty;
 
 use anyhow::Result;
 use args::{Parser, TishArgs};
@@ -28,7 +29,7 @@ lazy_lock! {
 }
 
 pub mod prelude {
-    pub use super::{config, lazy_lock, register_functions, sys};
+    pub use super::{config, dotfile, lazy_lock, register_functions, sys};
     pub use anyhow::anyhow;
 }
 

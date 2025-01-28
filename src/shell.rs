@@ -2,21 +2,27 @@ use crate::{
     args::TishArgs,
     command::{LuaState, TishCommand},
     env::EnvManager,
+    prelude::*,
     readline::AsyncLineReader,
     template::Template,
+    tty::get_tty_name_or_default,
 };
 
 use std::{
     env,
+    path::PathBuf,
     process::{self, ExitCode},
 };
 
+use anyhow::Result;
+use chrono::{DateTime, Local};
 use rustyline::error::ReadlineError;
 use tokio::signal::unix::{signal, SignalKind};
 
 pub struct TishShell {
     pub args: TishArgs,
     pub lua: LuaState,
+    home: Option<PathBuf>,
 }
 
 impl TishShell {
@@ -24,6 +30,7 @@ impl TishShell {
         let mut shell = Self {
             args: args.to_owned(),
             lua: LuaState::new()?,
+            home: dirs::home_dir(),
         };
 
         if !args.no_env {
@@ -32,6 +39,10 @@ impl TishShell {
 
         if args.login {
             shell.load_profile()?;
+        }
+
+        if !args.headless {
+            shell.login_message()?;
         }
 
         if let Some(line) = args.arguments {
@@ -45,24 +56,30 @@ impl TishShell {
         Ok(shell)
     }
 
-    fn load_config(&self) -> anyhow::Result<ExitCode> {
-        if let Some(home) = dirs::home_dir() {
-            let config = home.join(".tishrc");
-            if config.exists() {
-                self.lua.eval_file(&config)?;
+    fn login_message(&self) -> Result<ExitCode> {
+        dotfile! {
+            not, self.home => ".hushlogin",
+            |_| {
+                let tty = get_tty_name_or_default();
+                let now: DateTime<Local> = Local::now();
+                let formatted_date = now.format("%a %b %d %H:%M:%S").to_string();
+                println!("Last login: {} on {}", formatted_date, tty);
             }
         }
-        Ok(ExitCode::SUCCESS)
     }
 
-    fn load_profile(&self) -> anyhow::Result<ExitCode> {
-        if let Some(home) = dirs::home_dir() {
-            let profile = home.join(".tish_profile");
-            if profile.exists() {
-                self.lua.eval_file(&profile)?;
-            }
+    fn load_config(&self) -> Result<ExitCode> {
+        dotfile! {
+            self.home => ".tishrc",
+            |config| self.lua.eval_file(config)
         }
-        Ok(ExitCode::SUCCESS)
+    }
+
+    fn load_profile(&self) -> Result<ExitCode> {
+        dotfile! {
+            self.home => ".tish_profile",
+            |profile| self.lua.eval_file(profile)
+        }
     }
 
     fn format_prompt(&self) -> String {

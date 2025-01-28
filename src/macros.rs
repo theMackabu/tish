@@ -23,6 +23,29 @@ macro_rules! __lazy_lock_internal {
 }
 
 #[macro_export]
+macro_rules! dotfile {
+    ($path:expr => $dot:expr, $command:expr) => {
+        if let Some(home) = &$path {
+            let file = home.join($dot);
+            if file.exists() {
+                $command(&file)?;
+            }
+        }
+        Ok(ExitCode::SUCCESS)
+    };
+
+    (not, $path:expr => $dot:expr, $command:expr) => {
+        if let Some(home) = &$path {
+            let file = home.join($dot);
+            if !file.exists() {
+                $command(&file);
+            }
+        }
+        Ok(ExitCode::SUCCESS)
+    };
+}
+
+#[macro_export]
 macro_rules! register_functions {
     ($globals:expr, $($name:expr => $func:expr),* $(,)?) => {
         $($globals.set($name, $func)?;)*
