@@ -30,22 +30,26 @@ pub struct Highlighter {
 impl Highlighter {
     pub fn new() -> Self {
         let mut styles = HashMap::new();
-        styles.insert(TokenType::ValidCommand, "\x1b[1;32m".to_string());
-        styles.insert(TokenType::InvalidCommand, "\x1b[1;31m".to_string());
+        styles.insert(TokenType::ValidCommand, "\x1b[32m".to_string());
+        styles.insert(TokenType::InvalidCommand, "\x1b[31m".to_string());
         styles.insert(TokenType::Argument, "\x1b[0m".to_string());
-        styles.insert(TokenType::Option, "\x1b[1;36m".to_string());
-        styles.insert(TokenType::Variable, "\x1b[1;35m".to_string());
-        styles.insert(TokenType::Directory, "\x1b[1;35m".to_string());
-        styles.insert(TokenType::String, "\x1b[0;33m".to_string());
-        styles.insert(TokenType::Number, "\x1b[0;34m".to_string());
-        styles.insert(TokenType::Operator, "\x1b[1;37m".to_string());
-        styles.insert(TokenType::Comment, "\x1b[0;90m".to_string());
+        styles.insert(TokenType::Option, "\x1b[36m".to_string());
+        styles.insert(TokenType::Variable, "\x1b[35m".to_string());
+        styles.insert(TokenType::Directory, "\x1b[4;35m".to_string());
+        styles.insert(TokenType::String, "\x1b[33m".to_string());
+        styles.insert(TokenType::Number, "\x1b[34m".to_string());
+        styles.insert(TokenType::Operator, "\x1b[37m".to_string());
+        styles.insert(TokenType::Comment, "\x1b[90m".to_string());
         styles.insert(TokenType::Unknown, "\x1b[0m".to_string());
 
         Self { styles }
     }
 
     pub fn command_exists(&self, command: &str) -> bool {
+        if matches!(command, "cd" | "exit" | "help" | "?" | "source" | "echo" | "tish") {
+            return true;
+        }
+
         if Path::new(command).is_absolute() {
             return Path::new(command).exists();
         }
@@ -59,10 +63,15 @@ impl Highlighter {
             }
         }
 
-        matches!(command, "cd" | "exit" | "help" | "?" | "source" | "echo" | "tish")
+        false
     }
 
     pub fn highlight_with_cache(&self, input: &str, command_cache: &HashMap<String, bool>) -> String {
+        let input = input.trim_end();
+        if input.is_empty() {
+            return String::new();
+        }
+
         let tokens = self.tokenize(input, command_cache);
         let mut result = String::new();
         let mut last_end = 0;
@@ -92,8 +101,9 @@ impl Highlighter {
 
     fn tokenize(&self, input: &str, command_cache: &HashMap<String, bool>) -> Vec<Token> {
         let mut tokens = Vec::new();
-        let mut chars = input.char_indices().peekable();
         let mut is_first_word = true;
+        let mut in_whitespace = true;
+        let mut chars = input.char_indices().peekable();
 
         while let Some((start_pos, c)) = chars.next() {
             match c {
@@ -114,6 +124,8 @@ impl Highlighter {
                         end: end + 1,
                         content,
                     });
+                    is_first_word = false;
+                    in_whitespace = true;
                 }
                 '$' => {
                     let start = start_pos;
@@ -156,6 +168,25 @@ impl Highlighter {
                     });
                     is_first_word = false;
                 }
+                '-' if !in_whitespace => {
+                    let start = start_pos;
+                    let mut content = String::from(c);
+                    let mut end = start;
+                    while let Some(&(pos, next_c)) = chars.peek() {
+                        if next_c.is_whitespace() {
+                            break;
+                        }
+                        content.push(next_c);
+                        end = pos;
+                        chars.next();
+                    }
+                    tokens.push(Token {
+                        token_type: TokenType::Argument,
+                        start,
+                        end: end + 1,
+                        content,
+                    });
+                }
                 '-' => {
                     let start = start_pos;
                     let mut content = String::from(c);
@@ -175,6 +206,11 @@ impl Highlighter {
                         content,
                     });
                     is_first_word = false;
+                    in_whitespace = false;
+                }
+                c if c.is_whitespace() => {
+                    in_whitespace = true;
+                    continue;
                 }
                 c if c.is_ascii_digit() => {
                     let start = start_pos;
@@ -232,7 +268,25 @@ impl Highlighter {
                                 .get(&content)
                                 .map_or(TokenType::InvalidCommand, |&exists| if exists { TokenType::ValidCommand } else { TokenType::InvalidCommand })
                         }
-                    } else if expanded_path.is_dir() {
+                    } else if cfg!(target_os = "macos") {
+                        let dir_exists = if let Ok(entries) = std::fs::read_dir(expanded_path.parent().unwrap_or(Path::new("."))) {
+                            entries.filter_map(Result::ok).any(|entry| {
+                                entry
+                                    .path()
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .eq_ignore_ascii_case(&expanded_path.file_name().unwrap_or_default().to_string_lossy())
+                            })
+                        } else {
+                            false
+                        };
+                        if dir_exists {
+                            TokenType::Directory
+                        } else {
+                            TokenType::Argument
+                        }
+                    } else if expanded_path.canonicalize().ok().map_or(false, |p| p.is_dir()) {
                         TokenType::Directory
                     } else {
                         TokenType::Argument
@@ -254,11 +308,6 @@ impl Highlighter {
                         content: c.to_string(),
                     });
                     is_first_word = true;
-                }
-                c if c.is_whitespace() => {
-                    if !chars.peek().map_or(true, |(_, c)| c.is_whitespace()) {
-                        is_first_word = false;
-                    }
                 }
                 _ => {}
             }

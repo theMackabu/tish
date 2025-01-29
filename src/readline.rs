@@ -11,7 +11,7 @@ use rustyline::{
     hint::Hinter,
     history::FileHistory,
     validate::{MatchingBracketValidator, Validator},
-    Config, Context, Editor, Helper,
+    CompletionType, Config, Context, Editor, Helper,
 };
 
 type Readline<T> = Editor<T, FileHistory>;
@@ -189,7 +189,6 @@ impl Completer for TishHelper {
         self.update_command_status(line);
         let (start, _) = line[..pos].rsplit_once(char::is_whitespace).map_or((0, line), |(_, w)| (pos - w.len(), w));
         let completions = self.get_completions(line);
-        self.update_command_status(line);
         Ok((start, completions))
     }
 }
@@ -214,18 +213,20 @@ impl Hinter for TishHelper {
             } else {
                 s.strip_prefix(line).unwrap_or(s).to_string()
             };
-            format!("\x1b[90m{}\x1b[0m", hint)
+            return hint;
         })
     }
 }
 
 impl Validator for TishHelper {
-    fn validate(&self, ctx: &mut rustyline::validate::ValidationContext) -> rustyline::Result<rustyline::validate::ValidationResult> {
-        self.validator.validate(ctx)
-    }
+    fn validate(&self, ctx: &mut rustyline::validate::ValidationContext) -> rustyline::Result<rustyline::validate::ValidationResult> { self.validator.validate(ctx) }
 }
 
 impl Highlighter for TishHelper {
+    fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> { std::borrow::Cow::Owned(format!("\x1b[90m{hint}\x1b[0m")) }
+
+    fn highlight_candidate<'c>(&self, candidate: &'c str, _: CompletionType) -> std::borrow::Cow<'c, str> { std::borrow::Cow::Borrowed(candidate) }
+
     fn highlight<'l>(&self, line: &'l str, _: usize) -> std::borrow::Cow<'l, str> {
         self.update_command_status(line);
         let cache = self.command_cache.read();
@@ -233,7 +234,12 @@ impl Highlighter for TishHelper {
     }
 
     fn highlight_char(&self, line: &str, pos: usize, kind: CmdKind) -> bool {
-        self.bracket_highlighter.highlight_char(line, pos, kind)
+        if kind == CmdKind::Other || kind == CmdKind::MoveCursor {
+            self.update_command_status(line);
+            true
+        } else {
+            self.bracket_highlighter.highlight_char(line, pos, kind)
+        }
     }
 
     fn highlight_prompt<'b, 's: 'b, 'p: 'b>(&'s self, prompt: &'p str, default: bool) -> std::borrow::Cow<'b, str> {
@@ -253,11 +259,15 @@ impl AsyncLineReader {
         let config = Config::builder()
             .history_ignore_dups(true)?
             .color_mode(rustyline::ColorMode::Enabled)
-            .completion_type(rustyline::CompletionType::List)
+            .completion_type(rustyline::CompletionType::Fuzzy)
+            .edit_mode(rustyline::EditMode::Emacs)
+            .check_cursor_position(true)
             .build();
 
         let mut editor: Readline<TishHelper> = Readline::with_config(config)?;
+
         editor.set_helper(Some(TishHelper::new()));
+        editor.bind_sequence(rustyline::KeyEvent::new('\r', rustyline::Modifiers::NONE), rustyline::Cmd::AcceptLine);
 
         let history_file = {
             let mut file = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
