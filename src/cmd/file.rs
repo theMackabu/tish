@@ -25,7 +25,7 @@ impl FileInfo {
         let icon_key = DIR_ICONS.get(name_lower.as_str()).copied().unwrap_or_else(|| if name.starts_with('.') { "hiddendir" } else { "dir" });
 
         FileInfo {
-            file_type: "Directory",
+            file_type: "directory",
             icon: ICONS.get(icon_key).unwrap_or_else(|| ICONS.get("dir").unwrap()),
             display_name: format!("{}/", name),
         }
@@ -33,7 +33,7 @@ impl FileInfo {
 
     fn get_symlink_info(name: &str) -> Self {
         FileInfo {
-            file_type: "Symlink",
+            file_type: "symlink",
             icon: ICONS.get("link").expect("Link icon should exist"),
             display_name: format!("{}@", name),
         }
@@ -41,7 +41,7 @@ impl FileInfo {
 
     fn get_executable_info(name: &str) -> Self {
         FileInfo {
-            file_type: "Executable",
+            file_type: "executable",
             icon: ICONS.get("binary").expect("Binary icon should exist"),
             display_name: format!("{}*", name),
         }
@@ -58,7 +58,7 @@ impl FileInfo {
         };
 
         FileInfo {
-            file_type: "File",
+            file_type: "file",
             icon: ICONS.get(icon_key).unwrap_or_else(|| ICONS.get("file").unwrap()),
             display_name: name.to_string(),
         }

@@ -162,9 +162,12 @@ fn print_standard_entries(entries: &[Entry]) -> std::io::Result<()> {
 
 fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Result<()> {
     let widths = calculate_column_widths(entries);
+    let grey = "\x1b[38;5;240m";
+    let reset = "\x1b[0m";
 
     let mut header = format!(
-        "╭{}┬{}┬{}┬{}",
+        "{}╭{}┬{}┬{}┬{}",
+        grey,
         "─".repeat(widths.name + 4),
         "─".repeat(widths.size + 2),
         "─".repeat(widths.file_type + 2),
@@ -174,15 +177,23 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Resul
     if show_metadata {
         header.push_str(&format!("┬{}┬{}", "─".repeat(12), "─".repeat(16)));
     }
-    header.push('╮');
+    header.push_str(&format!("╮{}", reset));
     println!("{}", header);
 
     let mut titles = format!(
-        "│ {:<width_name$} │ {:<width_size$} │ {:<width_type$} │ {:<width_perm$}",
-        "NAME",
-        "SIZE",
-        "TYPE",
-        "PERMISSIONS",
+        "{}│{} {:<width_name$} {}│{} {:<width_size$} {}│{} {:<width_type$} {}│{} {:<width_perm$}",
+        grey,
+        reset,
+        "name",
+        grey,
+        reset,
+        "size",
+        grey,
+        reset,
+        "type",
+        grey,
+        reset,
+        "permissions",
         width_name = widths.name + 2,
         width_size = widths.size,
         width_type = widths.file_type,
@@ -190,13 +201,14 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Resul
     );
 
     if show_metadata {
-        titles.push_str(&format!(" │ {:<10} │ {:<14} ", "USER", "MODIFIED"));
+        titles.push_str(&format!(" {}│{} {:<10} {}│{} {:<14} ", grey, reset, "user", grey, reset, "modified"));
     }
-    titles.push('│');
+    titles.push_str(&format!("{}│{}", grey, reset));
     println!("{}", titles);
 
     let mut separator = format!(
-        "├{}┼{}┼{}┼{}",
+        "{}├{}┼{}┼{}┼{}",
+        grey,
         "─".repeat(widths.name + 4),
         "─".repeat(widths.size + 2),
         "─".repeat(widths.file_type + 2),
@@ -206,18 +218,27 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Resul
     if show_metadata {
         separator.push_str(&format!("┼{}┼{}", "─".repeat(12), "─".repeat(16)));
     }
-    separator.push('┤');
+    separator.push_str(&format!("┤{}", reset));
     println!("{}", separator);
 
     for entry in entries {
         let mut line = format!(
-            "│ {}{}{} {:<width_name$} │ {:>width_size$} │ {:<width_type$} │ {:<width_perm$}",
+            "{}│{} {}{}{} {:<width_name$} {}│{} {:>width_size$} {}│{} {:<width_type$} {}│{} \
+             {:<width_perm$}",
+            grey,
+            reset,
             entry.color,
             entry.icon,
             "\x1b[0m",
             entry.name,
+            grey,
+            reset,
             entry.size,
+            grey,
+            reset,
             entry.file_type,
+            grey,
+            reset,
             entry.permissions,
             width_name = widths.name,
             width_size = widths.size,
@@ -226,14 +247,15 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Resul
         );
 
         if show_metadata {
-            line.push_str(&format!(" │ {:<10} │ {:<14} ", entry.username, entry.modified));
+            line.push_str(&format!(" {}│{} {:<10} {}│{} {:<14} ", grey, reset, entry.username, grey, reset, entry.modified));
         }
-        line.push('│');
+        line.push_str(&format!("{}│{}", grey, reset));
         println!("{}", line);
     }
 
     let mut footer = format!(
-        "╰{}┴{}┴{}┴{}",
+        "{}╰{}┴{}┴{}┴{}",
+        grey,
         "─".repeat(widths.name + 4),
         "─".repeat(widths.size + 2),
         "─".repeat(widths.file_type + 2),
@@ -243,7 +265,7 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Resul
     if show_metadata {
         footer.push_str(&format!("┴{}┴{}", "─".repeat(12), "─".repeat(16)));
     }
-    footer.push('╯');
+    footer.push_str(&format!("╯{}", reset));
     println!("{}", footer);
 
     Ok(())
