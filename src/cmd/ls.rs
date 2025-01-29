@@ -1,4 +1,3 @@
-use crate::{os::user::get_user_by_uid, prelude::*};
 use anyhow::Result;
 use chrono::{DateTime, Local, TimeZone};
 
@@ -10,35 +9,41 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::{
+    cmd::file,
+    os::{size::dimensions, user::get_user_by_uid},
+    prelude::*,
+};
+
 struct Entry {
+    name: String,
     size: String,
-    nlink: String,
     modified: String,
     username: String,
-    styled_name: String,
+    file_type: String,
+    color: String,
+    icon: &'static str,
+    permissions: String,
 }
 
-const RESET: &str = "\x1b[0m";
-const BOLD: &str = "\x1b[1m";
-const ITALIC: &str = "\x1b[3m";
-const YELLOW: &str = "\x1b[33m";
-const BLUE: &str = "\x1b[34m";
-const CYAN: &str = "\x1b[36m";
-const GREEN: &str = "\x1b[32m";
-const RED: &str = "\x1b[31m";
-const MAGENTA: &str = "\x1b[35m";
-const BRIGHT_YELLOW: &str = "\x1b[93m";
-const LIGHT_PINK: &str = "\x1b[38;5;218m";
-const LIGHT_CYAN: &str = "\x1b[38;5;159m";
-const SILVER: &str = "\x1b[38;5;250m";
+struct ColumnWidths {
+    name: usize,
+    size: usize,
+    file_type: usize,
+    permissions: usize,
+}
 
 pub fn run(args: &Vec<String>) -> Result<ExitCode> {
+    let mut table = false;
     let mut show_all = false;
+    let mut metadata = false;
     let mut path = PathBuf::from(".");
 
     argument! {
         args: args.into_iter(),
         options: {
+            l => table = true,
+            m => metadata = true,
             a => show_all = true,
             h => {
                 print_usage();
@@ -51,159 +56,208 @@ pub fn run(args: &Vec<String>) -> Result<ExitCode> {
         on_invalid: |c| {
             eprintln!("Unknown option: -{c}");
             print_usage();
-
         }
     }
 
-    let (dirs, files, symlinks) = read_directory(&path, show_all)?;
-    print_entries("DIRECTORIES", &dirs, true);
-    print_entries("FILES", &files, false);
-    print_entries("SYMLINKS", &symlinks, false);
+    let entries = read_directory(&path, show_all)?;
+
+    if table {
+        print_table_entries(&entries, metadata)?;
+    } else {
+        print_standard_entries(&entries)?;
+    }
 
     Ok(ExitCode::SUCCESS)
 }
 
-fn style_text(text: &str, style: &[&str]) -> String { format!("{}{}{}", style.join(""), text, RESET) }
-
 fn print_usage() {
-    println!("usage: ls [-ah] [file ...]");
+    println!("usage: ls [-alm] [path]");
 }
 
-fn print_entries(category: &str, entries: &[Entry], is_dir: bool) {
-    if !entries.is_empty() {
-        println!("\n{}", style_text(category, &[BOLD, YELLOW]));
-
-        let max_size_width = entries.iter().map(|e| e.size.len()).max().unwrap_or(0).max(4);
-        let max_nlink_width = entries.iter().map(|e| e.nlink.len()).max().unwrap_or(0).max(5);
-        let max_modified_width = entries.iter().map(|e| e.modified.len()).max().unwrap_or(0).max(8);
-        let max_username_width = entries.iter().map(|e| e.username.len()).max().unwrap_or(0).max(8);
-
-        if is_dir {
-            println!(
-                "  {:width_username$}  {:>width_nlink$}  {:width_modified$}  {}",
-                style_text("Owner", &[ITALIC, BRIGHT_YELLOW]),
-                style_text("Links", &[ITALIC, BRIGHT_YELLOW]),
-                style_text("Modified", &[ITALIC, BRIGHT_YELLOW]),
-                style_text("Name", &[ITALIC, BRIGHT_YELLOW]),
-                width_nlink = max_nlink_width,
-                width_modified = max_modified_width,
-                width_username = max_username_width
-            );
-
-            for entry in entries {
-                println!(
-                    "  {:width_username$}  {:>width_nlink$}  {:width_modified$}  {}",
-                    style_text(&entry.username, &[LIGHT_PINK]),
-                    style_text(&entry.nlink, &[LIGHT_CYAN]),
-                    style_text(&entry.modified, &[SILVER]),
-                    entry.styled_name,
-                    width_username = max_username_width,
-                    width_nlink = max_nlink_width,
-                    width_modified = max_modified_width,
-                );
-            }
-        } else {
-            println!(
-                "  {:width_username$}  {:>width_size$}  {:width_modified$}  {}",
-                style_text("Owner", &[ITALIC, BRIGHT_YELLOW]),
-                style_text("Size", &[ITALIC, BRIGHT_YELLOW]),
-                style_text("Modified", &[ITALIC, BRIGHT_YELLOW]),
-                style_text("Name", &[ITALIC, BRIGHT_YELLOW]),
-                width_size = max_size_width,
-                width_modified = max_modified_width,
-                width_username = max_username_width
-            );
-
-            for entry in entries {
-                println!(
-                    "  {:width_username$}  {:>width_size$}  {:width_modified$}  {}",
-                    style_text(&entry.username, &[LIGHT_PINK]),
-                    style_text(&entry.size, &[LIGHT_CYAN]),
-                    style_text(&entry.modified, &[SILVER]),
-                    entry.styled_name,
-                    width_username = max_username_width,
-                    width_size = max_size_width,
-                    width_modified = max_modified_width,
-                );
-            }
-        }
-    }
-}
-
-fn read_directory(path: &Path, show_all: bool) -> std::io::Result<(Vec<Entry>, Vec<Entry>, Vec<Entry>)> {
+fn read_directory(path: &Path, show_all: bool) -> std::io::Result<Vec<Entry>> {
     let mut entries: Vec<_> = fs::read_dir(path)?.filter_map(Result::ok).filter(|entry| show_all || !is_hidden(entry)).collect();
-
-    let mut dirs = Vec::new();
-    let mut files = Vec::new();
-    let mut symlinks = Vec::new();
 
     entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
+    let mut result = Vec::new();
     for entry in entries {
         let metadata = entry.metadata()?;
-        let formatted_entry = format_entry(&entry, &metadata)?;
-
-        if metadata.is_dir() {
-            dirs.push(formatted_entry);
-        } else if metadata.is_symlink() {
-            symlinks.push(formatted_entry);
-        } else if metadata.is_file() {
-            files.push(formatted_entry);
+        if let Ok(formatted_entry) = format_entry(&entry, &metadata) {
+            result.push(formatted_entry);
         }
     }
 
-    Ok((dirs, files, symlinks))
+    result.sort_by(|a, b| if a.file_type != b.file_type { a.file_type.cmp(&b.file_type) } else { a.name.cmp(&b.name) });
+
+    Ok(result)
 }
 
 fn format_entry(entry: &fs::DirEntry, metadata: &fs::Metadata) -> std::io::Result<Entry> {
-    let nlink = metadata.nlink().to_string();
-    let file_name = entry.file_name().into_string().unwrap_or_default();
-    let size = format_size(metadata.len());
-    let modified = format_time(metadata.modified()?);
-    let styled_name = style_name(&entry, &metadata, &file_name);
-    let username = get_username(metadata.uid());
+    let mode = metadata.mode();
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let file_info = file::FileInfo::new(&metadata, &name);
 
     Ok(Entry {
-        size,
-        nlink,
-        modified,
-        username,
-        styled_name,
+        name: file_info.display_name,
+        size: format_size(metadata.len()),
+        modified: format_time(metadata.modified()?),
+        username: get_username(metadata.uid()),
+        file_type: file_info.file_type.to_string(),
+        icon: file_info.icon.get_glyph(),
+        color: file_info.icon.get_color(),
+        permissions: format_permissions(mode),
     })
-}
-
-fn style_name(entry: &fs::DirEntry, metadata: &fs::Metadata, name: &str) -> String {
-    let mode = metadata.mode();
-    if metadata.is_dir() {
-        if mode & 0o002 != 0 {
-            style_text(name, &[BOLD, YELLOW])
-        } else {
-            style_text(name, &[BOLD, BLUE])
-        }
-    } else if metadata.is_symlink() {
-        style_text(name, &[BOLD, CYAN])
-    } else if mode & 0o111 != 0 {
-        style_text(name, &[BOLD, GREEN])
-    } else if is_archive(&entry.path()) {
-        style_text(name, &[BOLD, RED])
-    } else if is_media(&entry.path()) {
-        style_text(name, &[BOLD, MAGENTA])
-    } else {
-        name.to_string()
-    }
 }
 
 fn get_username(uid: u32) -> String { get_user_by_uid(uid).map(|user| user.name().to_string_lossy().into_owned()).unwrap_or_else(|| uid.to_string()) }
 
+fn calculate_column_widths(entries: &[Entry]) -> ColumnWidths {
+    let mut widths = ColumnWidths {
+        name: 4,
+        size: 4,
+        file_type: 4,
+        permissions: 11,
+    };
+
+    for entry in entries {
+        widths.name = widths.name.max(entry.name.len());
+        widths.size = widths.size.max(entry.size.len());
+        widths.file_type = widths.file_type.max(entry.file_type.len());
+    }
+
+    widths
+}
+
+fn print_standard_entries(entries: &[Entry]) -> std::io::Result<()> {
+    let terminal_width = match dimensions() {
+        Some((w, _)) => w,
+        None => 80,
+    };
+
+    let mut current_line_width = 0;
+    let min_spacing = 2;
+
+    for (i, entry) in entries.iter().enumerate() {
+        let display_length = entry.name.len() + 2;
+
+        if current_line_width + display_length >= terminal_width {
+            println!();
+            current_line_width = 0;
+        }
+
+        print!("{}{} \x1b[0m{}", entry.color, entry.icon, entry.name);
+
+        if i < entries.len() - 1 {
+            print!("  ");
+            current_line_width += display_length + min_spacing;
+        }
+    }
+
+    if !entries.is_empty() {
+        println!();
+    }
+
+    Ok(())
+}
+
+fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Result<()> {
+    let widths = calculate_column_widths(entries);
+
+    let mut header = format!(
+        "╭{}┬{}┬{}┬{}",
+        "─".repeat(widths.name + 4),
+        "─".repeat(widths.size + 2),
+        "─".repeat(widths.file_type + 2),
+        "─".repeat(widths.permissions + 2)
+    );
+
+    if show_metadata {
+        header.push_str(&format!("┬{}┬{}", "─".repeat(12), "─".repeat(16)));
+    }
+    header.push('╮');
+    println!("{}", header);
+
+    let mut titles = format!(
+        "│ {:<width_name$} │ {:<width_size$} │ {:<width_type$} │ {:<width_perm$}",
+        "NAME",
+        "SIZE",
+        "TYPE",
+        "PERMISSIONS",
+        width_name = widths.name + 2,
+        width_size = widths.size,
+        width_type = widths.file_type,
+        width_perm = widths.permissions + if show_metadata { 0 } else { 1 }
+    );
+
+    if show_metadata {
+        titles.push_str(&format!(" │ {:<10} │ {:<14} ", "USER", "MODIFIED"));
+    }
+    titles.push('│');
+    println!("{}", titles);
+
+    let mut separator = format!(
+        "├{}┼{}┼{}┼{}",
+        "─".repeat(widths.name + 4),
+        "─".repeat(widths.size + 2),
+        "─".repeat(widths.file_type + 2),
+        "─".repeat(widths.permissions + 2)
+    );
+
+    if show_metadata {
+        separator.push_str(&format!("┼{}┼{}", "─".repeat(12), "─".repeat(16)));
+    }
+    separator.push('┤');
+    println!("{}", separator);
+
+    for entry in entries {
+        let mut line = format!(
+            "│ {}{}{} {:<width_name$} │ {:>width_size$} │ {:<width_type$} │ {:<width_perm$}",
+            entry.color,
+            entry.icon,
+            "\x1b[0m",
+            entry.name,
+            entry.size,
+            entry.file_type,
+            entry.permissions,
+            width_name = widths.name,
+            width_size = widths.size,
+            width_type = widths.file_type,
+            width_perm = widths.permissions + if show_metadata { 0 } else { 1 }
+        );
+
+        if show_metadata {
+            line.push_str(&format!(" │ {:<10} │ {:<14} ", entry.username, entry.modified));
+        }
+        line.push('│');
+        println!("{}", line);
+    }
+
+    let mut footer = format!(
+        "╰{}┴{}┴{}┴{}",
+        "─".repeat(widths.name + 4),
+        "─".repeat(widths.size + 2),
+        "─".repeat(widths.file_type + 2),
+        "─".repeat(widths.permissions + 2)
+    );
+
+    if show_metadata {
+        footer.push_str(&format!("┴{}┴{}", "─".repeat(12), "─".repeat(16)));
+    }
+    footer.push('╯');
+    println!("{}", footer);
+
+    Ok(())
+}
+
 fn format_size(size: u64) -> String {
     if size >= 1024 * 1024 * 1024 {
-        format!("{:>5.1}gb", size as f64 / (1024.0 * 1024.0 * 1024.0))
+        format!("{:>5.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
     } else if size >= 1024 * 1024 {
-        format!("{:>5.1}mb", size as f64 / (1024.0 * 1024.0))
+        format!("{:>5.1} MB", size as f64 / (1024.0 * 1024.0))
     } else if size >= 1024 {
-        format!("{:>5.1}kb", size as f64 / 1024.0)
+        format!("{:>5.1} KB", size as f64 / 1024.0)
     } else {
-        format!("{:>6}b", size)
+        format!("{:>6} B", size)
     }
 }
 
@@ -222,18 +276,28 @@ fn format_time(time: SystemTime) -> String {
 
 fn is_hidden(entry: &fs::DirEntry) -> bool { entry.file_name().as_encoded_bytes().first().map(|&b| b == b'.').unwrap_or(false) }
 
-fn is_archive(path: &Path) -> bool {
-    let extensions = [".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar"];
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| extensions.contains(&ext.to_lowercase().as_str()))
-        .unwrap_or(false)
-}
+fn format_permissions(mode: u32) -> String {
+    let mut result = String::with_capacity(10);
 
-fn is_media(path: &Path) -> bool {
-    let extensions = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".mp3", ".wav", ".flac", ".ogg", ".mp4", ".avi", ".mkv", ".mov"];
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| extensions.contains(&ext.to_lowercase().as_str()))
-        .unwrap_or(false)
+    result.push(if mode & 0o040000 != 0 {
+        'd'
+    } else if mode & 0o120000 != 0 {
+        'l'
+    } else {
+        '-'
+    });
+
+    result.push(if mode & 0o400 != 0 { 'r' } else { '-' });
+    result.push(if mode & 0o200 != 0 { 'w' } else { '-' });
+    result.push(if mode & 0o100 != 0 { 'x' } else { '-' });
+
+    result.push(if mode & 0o040 != 0 { 'r' } else { '-' });
+    result.push(if mode & 0o020 != 0 { 'w' } else { '-' });
+    result.push(if mode & 0o010 != 0 { 'x' } else { '-' });
+
+    result.push(if mode & 0o004 != 0 { 'r' } else { '-' });
+    result.push(if mode & 0o002 != 0 { 'w' } else { '-' });
+    result.push(if mode & 0o001 != 0 { 'x' } else { '-' });
+
+    result
 }

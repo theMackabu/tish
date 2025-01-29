@@ -1,12 +1,12 @@
 #[macro_export]
 macro_rules! lazy_lock {
-    ($(#[$attr:meta])* unsafe static $N:ident : $T:ty = $e:expr; $($t:tt)*) => {
+    ($(#[$attr:meta])* static $N:ident : $T:ty = $e:expr; $($t:tt)*) => {
         $crate::__lazy_lock_internal!($(#[$attr])* () static $N : $T = $e; $($t)*);
     };
-    ($(#[$attr:meta])* pub unsafe static $N:ident : $T:ty = $e:expr; $($t:tt)*) => {
+    ($(#[$attr:meta])* pub static $N:ident : $T:ty = $e:expr; $($t:tt)*) => {
         $crate::__lazy_lock_internal!($(#[$attr])* (pub) static $N : $T = $e; $($t)*);
     };
-    ($(#[$attr:meta])* pub unsafe ($($vis:tt)+) static $N:ident : $T:ty = $e:expr; $($t:tt)*) => {
+    ($(#[$attr:meta])* pub ($($vis:tt)+) static $N:ident : $T:ty = $e:expr; $($t:tt)*) => {
         $crate::__lazy_lock_internal!($(#[$attr])* (pub ($($vis)+)) static $N : $T = $e; $($t)*);
     };
     () => ()

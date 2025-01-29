@@ -25,8 +25,8 @@ use std::{
 type AliasMap = HashMap<String, String>;
 
 lazy_lock! {
-    pub unsafe static JOBS: Arc<Mutex<JobManager>> = Arc::new(Mutex::new(JobManager::new()));
-    pub unsafe static ALIASES: Arc<Mutex<AliasMap>> = Arc::new(Mutex::new(AliasMap::new()));
+    pub static JOBS: Arc<Mutex<JobManager>> = Arc::new(Mutex::new(JobManager::new()));
+    pub static ALIASES: Arc<Mutex<AliasMap>> = Arc::new(Mutex::new(AliasMap::new()));
 }
 
 pub mod prelude {

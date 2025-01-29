@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod env;
+pub mod size;
 pub mod r#unsafe;
 pub mod user;
 
