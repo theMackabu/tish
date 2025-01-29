@@ -39,6 +39,12 @@ async fn main() -> Result<ExitCode> {
     let args = TishArgs::parse();
     let mut shell = TishShell::new(args).await?;
 
+    env_set_sync! {
+        0 = "tish",
+        LUA_VER = "5.4",
+        VERSION = env!("CARGO_PKG_VERSION")
+    };
+
     shell.run().await?;
     Ok(ExitCode::SUCCESS)
 }
