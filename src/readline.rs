@@ -1,15 +1,21 @@
 use crate::shell::highlight;
 use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
-use std::{collections::HashMap, env, fs, path::Path, sync::Arc};
 use tokio::sync::mpsc;
+
+use std::{
+    collections::{HashMap, HashSet},
+    env, fs,
+    path::Path,
+    sync::Arc,
+};
 
 use rustyline::{
     completion::Completer,
     error::ReadlineError,
     highlight::{CmdKind, Highlighter, MatchingBracketHighlighter},
     hint::Hinter,
-    history::FileHistory,
+    history::{FileHistory, History, SearchDirection, SearchResult},
     validate::{MatchingBracketValidator, Validator},
     CompletionType, Config, Context, Editor, Helper,
 };
@@ -58,18 +64,106 @@ impl TishHelper {
         }
     }
 
-    fn get_completions(&self, input: &str) -> Vec<String> {
+    fn get_history_matches(&self, word: &str, history: &dyn History) -> Vec<String> {
+        let mut matches = HashSet::new();
+
+        for index in (0..history.len()).rev() {
+            if let Ok(Some(result)) = history.get(index, SearchDirection::Forward) {
+                let words: Vec<&str> = result.entry.split_whitespace().collect();
+                if let Some(first_word) = words.first() {
+                    if first_word.starts_with(word) {
+                        matches.insert(first_word.to_string());
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<String> = matches.into_iter().collect();
+        result.sort();
+        result
+    }
+
+    fn get_completions(&self, input: &str, ctx: &Context<'_>) -> Vec<String> {
         let mut completions = Vec::new();
+        let (_, word) = input.rsplit_once(char::is_whitespace).map_or(("", input), |(p, w)| (p, w));
 
-        let (prefix, word) = input.rsplit_once(char::is_whitespace).map_or(("", input), |(p, w)| (p, w));
-        let is_first_word = prefix.is_empty();
+        let history_matches = self.get_history_matches(word, ctx.history());
+        completions.extend(history_matches);
 
-        if (prefix == "cd" || prefix == "ls") && word.is_empty() {
+        if !completions.is_empty() {
+            return completions;
+        }
+
+        if word.is_empty() || ["cd", "exit", "help", "?", "source", "echo", "tish"].iter().any(|cmd| cmd.starts_with(word)) {
+            for cmd in ["cd", "exit", "help", "?", "source", "echo", "tish"] {
+                if cmd.starts_with(word) {
+                    completions.push(cmd.to_string());
+                }
+            }
+        }
+
+        if word.starts_with("~/") {
+            if let Some(home) = dirs::home_dir() {
+                let home_str = home.to_string_lossy();
+                let search_path = word.replace("~/", &format!("{}/", home_str));
+                let dir_path = Path::new(&search_path);
+                let parent = dir_path.parent().unwrap_or(dir_path);
+
+                if let Ok(entries) = fs::read_dir(parent) {
+                    let search_name = dir_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+
+                    let mut matches: Vec<_> = entries.filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().starts_with(&search_name)).collect();
+
+                    matches.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+                    for entry in matches {
+                        let path = entry.path();
+                        if let Ok(stripped) = path.strip_prefix(&home) {
+                            let completion = format!("~/{}", stripped.to_string_lossy());
+                            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                                completions.push(format!("{}/", completion));
+                            } else {
+                                completions.push(completion);
+                            }
+                        }
+                    }
+                }
+            }
+        } else if word.contains('/') || word.starts_with('.') {
+            let (dir_path, file_prefix) = word.rsplit_once('/').map_or((".", word), |(d, f)| (d, f));
+
+            if let Ok(entries) = fs::read_dir(dir_path) {
+                let mut matches: Vec<_> = entries.filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().starts_with(file_prefix)).collect();
+
+                matches.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned());
+
+                for entry in matches {
+                    let path = entry.path();
+                    let completion = path.to_string_lossy().into_owned();
+
+                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                        completions.push(format!("{}/", completion));
+                    } else {
+                        completions.push(completion);
+                    }
+                }
+            }
+        } else {
+            if let Ok(paths) = env::var("PATH") {
+                for path in env::split_paths(&paths) {
+                    if let Ok(entries) = fs::read_dir(path) {
+                        for entry in entries.filter_map(Result::ok) {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if name.starts_with(word) {
+                                completions.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Ok(entries) = fs::read_dir(".") {
-                let mut matches: Vec<_> = entries
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) || prefix == "ls")
-                    .collect();
+                let mut matches: Vec<_> = entries.filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().starts_with(word)).collect();
 
                 matches.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
@@ -81,101 +175,11 @@ impl TishHelper {
                         completions.push(name);
                     }
                 }
-                return completions;
             }
         }
 
-        if prefix == "cd" && word.starts_with("~/") {
-            if let Some(home) = dirs::home_dir() {
-                let home_str = home.to_string_lossy();
-                let search_path = word.replace("~/", &format!("{}/", home_str));
-                let dir_path = Path::new(&search_path);
-                let parent = dir_path.parent().unwrap_or(dir_path);
-
-                if let Ok(entries) = fs::read_dir(parent) {
-                    let search_name = dir_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-
-                    let mut matches: Vec<_> = entries
-                        .filter_map(Result::ok)
-                        .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && entry.file_name().to_string_lossy().starts_with(&search_name))
-                        .collect();
-
-                    matches.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-
-                    for entry in matches {
-                        let path = entry.path();
-                        if let Ok(stripped) = path.strip_prefix(&home) {
-                            completions.push(format!("~/{}", stripped.to_string_lossy()));
-                        }
-                    }
-                    return completions;
-                }
-            }
-        }
-
-        if !word.is_empty() || is_first_word {
-            if word.contains('/') || word.starts_with('.') || word.starts_with('~') {
-                let expanded_word = if word.starts_with('~') {
-                    if let Some(home) = dirs::home_dir() {
-                        word.replace("~/", &format!("{}/", home.to_string_lossy()))
-                    } else {
-                        word.to_string()
-                    }
-                } else {
-                    word.to_string()
-                };
-
-                let (dir_path, file_prefix) = expanded_word.rsplit_once('/').map_or((".", expanded_word.as_str()), |(d, f)| (d, f));
-
-                if let Ok(entries) = fs::read_dir(dir_path) {
-                    let mut matches: Vec<_> = entries.filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().starts_with(file_prefix)).collect();
-
-                    matches.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned());
-
-                    for entry in matches {
-                        let path = entry.path();
-                        let completion = if word.starts_with('~') {
-                            if let (Some(_), Ok(stripped)) = (dirs::home_dir(), path.strip_prefix(dir_path)) {
-                                format!("~/{}", stripped.to_string_lossy())
-                            } else {
-                                path.to_string_lossy().into_owned()
-                            }
-                        } else {
-                            path.to_string_lossy().into_owned()
-                        };
-
-                        if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                            completions.push(format!("{}/", completion));
-                        } else {
-                            completions.push(completion);
-                        }
-                    }
-                }
-            } else if is_first_word {
-                if let Ok(paths) = env::var("PATH") {
-                    for path in env::split_paths(&paths) {
-                        if let Ok(entries) = fs::read_dir(path) {
-                            for entry in entries.filter_map(Result::ok) {
-                                let name = entry.file_name().to_string_lossy().to_string();
-                                if name.starts_with(word) {
-                                    completions.push(name);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                for cmd in ["cd", "exit", "help", "?", "source", "echo", "tish"] {
-                    if cmd.starts_with(word) {
-                        completions.push(cmd.to_string());
-                    }
-                }
-
-                completions.sort();
-                completions.dedup();
-            }
-        }
-
+        completions.sort();
+        completions.dedup();
         completions
     }
 }
@@ -185,10 +189,10 @@ impl Helper for TishHelper {}
 impl Completer for TishHelper {
     type Candidate = String;
 
-    fn complete(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+    fn complete(&self, line: &str, pos: usize, ctx: &Context<'_>) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         self.update_command_status(line);
         let (start, _) = line[..pos].rsplit_once(char::is_whitespace).map_or((0, line), |(_, w)| (pos - w.len(), w));
-        let completions = self.get_completions(line);
+        let completions = self.get_completions(line, ctx);
         Ok((start, completions))
     }
 }
@@ -196,7 +200,7 @@ impl Completer for TishHelper {
 impl Hinter for TishHelper {
     type Hint = String;
 
-    fn hint(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> Option<String> {
+    fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<String> {
         if pos < line.len() {
             return None;
         }
@@ -206,7 +210,7 @@ impl Hinter for TishHelper {
             return None;
         }
 
-        let completions = self.get_completions(line);
+        let completions = self.get_completions(line, ctx);
         completions.first().map(|s| {
             let hint = if let Some(common) = line.rsplit_once(char::is_whitespace) {
                 s.strip_prefix(common.1).unwrap_or(s).to_string()
