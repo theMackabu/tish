@@ -1,4 +1,5 @@
 mod args;
+mod cmd;
 mod command;
 mod jobs;
 mod lua;
@@ -29,7 +30,7 @@ lazy_lock! {
 }
 
 pub mod prelude {
-    pub use super::{config, dotfile, lazy_lock, register_functions, sys};
+    pub use super::{argument, config, dotfile, lazy_lock, register_functions, sys};
     pub use anyhow::anyhow;
 }
 

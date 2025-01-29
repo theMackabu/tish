@@ -1,6 +1,7 @@
 pub use super::lua::LuaState;
 
 use crate::{
+    cmd,
     models::{Command, InternalCommand},
     os::env::EnvManager,
     shell::tokenizer::Tokenizer,
@@ -77,6 +78,10 @@ impl TishCommand {
         }
 
         let result = match command {
+            Command::Ls => match shell.lua.get_config().read().builtin_ls {
+                true => cmd::ls::run(&self.args)?,
+                false => self.execute_external(shell).await?,
+            },
             Command::Cd => self.handle_builtin_cd()?,
             Command::Help => Self::handle_builtin_help()?,
             Command::Exit => std::process::exit(0),

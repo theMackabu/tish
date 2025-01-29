@@ -1,6 +1,7 @@
 #[derive(Debug)]
 pub enum Command {
     Cd,
+    Ls,
     Help,
     Exit,
     Source,
@@ -22,6 +23,7 @@ impl Command {
     pub fn from_str(cmd: &str, args: &[String]) -> Command {
         match cmd {
             "cd" => Command::Cd,
+            "ls" => Command::Ls,
             "exit" => Command::Exit,
             "source" => Command::Source,
             "help" | "?" => Command::Help,

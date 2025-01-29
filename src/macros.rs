@@ -46,6 +46,30 @@ macro_rules! dotfile {
 }
 
 #[macro_export]
+macro_rules! argument {
+    (
+        args: $args:expr,
+        options: { $( $opt:ident => $set:expr ),* },
+        command: $command:expr,
+        on_invalid: $on_invalid:expr
+    ) => {
+        for arg in $args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        $(ch if ch == stringify!($opt).chars().next().unwrap() => $set, )*
+                        _ => {
+                            $on_invalid(c);
+                            return Ok(ExitCode::SUCCESS);
+                        }
+                    }
+                }
+            } else { $command(&arg) }
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! register_functions {
     ($globals:expr, $($name:expr => $func:expr),* $(,)?) => {
         $($globals.set($name, $func)?;)*

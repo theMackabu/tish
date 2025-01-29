@@ -20,6 +20,7 @@ pub struct ShellConfig {
     pub lua_cpath: Option<String>,
     pub history_size: usize,
     pub auto_cd: bool,
+    pub builtin_ls: bool,
     pub show_hidden: bool,
 }
 
@@ -38,6 +39,7 @@ impl LuaState {
             lua_cpath: None,
             history_size: 1000,
             auto_cd: true,
+            builtin_ls: false,
             show_hidden: false,
         }));
 
@@ -68,11 +70,13 @@ impl LuaState {
             "kill" => sys!(kill => self.lua)?,
             "sysinfo" => sys!(sysinfo => self.lua)?,
             "timestamp" => sys!(timestamp => self.lua)?,
+
             "set_prompt" => config!(self.lua, self.config, set_prompt, prompt, String)?,
             "set_lua_path" => config!(self.lua, self.config, set_lua_path, lua_path, String, Some)?,
             "set_lua_cpath" => config!(self.lua, self.config, set_lua_cpath, lua_cpath, String, Some)?,
             "set_history_size" => config!(self.lua, self.config, set_history_size, history_size, usize)?,
             "set_auto_cd" => config!(self.lua, self.config, set_auto_cd, auto_cd, bool)?,
+            "set_builtin_ls" => config!(self.lua, self.config, set_builtin_ls, builtin_ls, bool)?,
             "set_show_hidden" => config!(self.lua, self.config, set_show_hidden, show_hidden, bool)?
         );
 
@@ -92,7 +96,5 @@ impl LuaState {
         self.eval(&code)
     }
 
-    pub fn get_config(&self) -> Arc<RwLock<ShellConfig>> {
-        self.config.clone()
-    }
+    pub fn get_config(&self) -> Arc<RwLock<ShellConfig>> { self.config.clone() }
 }

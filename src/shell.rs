@@ -143,7 +143,7 @@ impl TishShell {
                 Some(io_err) => format!("{}: {}", cmd.program, io_err),
                 _ => match err.downcast_ref::<String>() {
                     Some(str_err) => str_err.to_string(),
-                    None => format!("{}: {err}", cmd.program),
+                    None => format!("{}: {err}\n", cmd.program),
                 },
             };
 

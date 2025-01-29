@@ -15,6 +15,7 @@ pub enum TokenType {
     String,
     Number,
     Directory,
+    ImplicitDirectory,
     Operator,
     Comment,
     Unknown,
@@ -41,6 +42,7 @@ impl Highlighter {
         styles.insert(TokenType::Option, "\x1b[36m".to_string());
         styles.insert(TokenType::Variable, "\x1b[35m".to_string());
         styles.insert(TokenType::Directory, "\x1b[4;35m".to_string());
+        styles.insert(TokenType::ImplicitDirectory, "\x1b[4;35m".to_string());
         styles.insert(TokenType::String, "\x1b[33m".to_string());
         styles.insert(TokenType::Number, "\x1b[34m".to_string());
         styles.insert(TokenType::Operator, "\x1b[37m".to_string());
@@ -125,6 +127,18 @@ impl Highlighter {
         } else {
             false
         }
+    }
+
+    fn can_be_implicit_cd(&self, token: &str, is_first_word: bool) -> bool {
+        if !is_first_word {
+            return false;
+        }
+
+        let path = Path::new(token);
+        if let Some(expanded_path) = self.expand_path(path) {
+            return expanded_path.is_dir();
+        }
+        false
     }
 
     fn tokenize(&self, input: &str, command_cache: &HashMap<String, bool>) -> Vec<Token> {
@@ -274,9 +288,11 @@ impl Highlighter {
                         chars.next();
                     }
 
-                    let path = Path::new(&content);
                     let token_type = if is_first_word {
-                        if content.starts_with("./") || content.starts_with("../") {
+                        if self.can_be_implicit_cd(&content, true) {
+                            TokenType::ImplicitDirectory
+                        } else if content.starts_with("./") || content.starts_with("../") {
+                            let path = Path::new(&content);
                             if path.exists() && path.metadata().map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false) {
                                 TokenType::ValidCommand
                             } else {
@@ -288,6 +304,7 @@ impl Highlighter {
                                 .map_or(TokenType::InvalidCommand, |&exists| if exists { TokenType::ValidCommand } else { TokenType::InvalidCommand })
                         }
                     } else {
+                        let path = Path::new(&content);
                         if self.is_directory(path) {
                             TokenType::Directory
                         } else {
