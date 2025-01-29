@@ -1,4 +1,4 @@
-use crate::os::user;
+use crate::{os::user, shell::tokenizer::Tokenizer};
 use std::path::PathBuf;
 
 pub struct EnvManager {
@@ -12,31 +12,45 @@ impl EnvManager {
     }
 
     pub fn expand(&mut self) -> String {
+        let mut tokenizer = Tokenizer::new(&self.input);
         let mut result = String::new();
-        let mut word_start = true;
+        let mut first = true;
 
-        while let Some(c) = self.next_char() {
-            match c {
-                '$' => {
+        while let Some(token) = tokenizer.next() {
+            if !first {
+                result.push(' ');
+            }
+            first = false;
+
+            if (token.starts_with('"') && token.ends_with('"')) || (token.starts_with('\'') && token.ends_with('\'')) {
+                let inner = &token[1..token.len() - 1];
+                if inner.starts_with('~') {
+                    result.push_str(&self.expand_home_str(inner));
+                } else if inner.starts_with('$') {
+                    self.input = inner.to_string();
+                    self.pos = 0;
                     result.push_str(&self.expand_variable());
-                    word_start = false;
+                } else {
+                    result.push_str(inner);
                 }
-                '~' if word_start => {
-                    result.push_str(&self.expand_home());
-                    word_start = false;
-                }
-                c if c.is_whitespace() => {
-                    result.push(c);
-                    word_start = true;
-                }
-                c => {
-                    result.push(c);
-                    word_start = false;
-                }
+            } else if token.starts_with('~') {
+                result.push_str(&self.expand_home_str(&token));
+            } else if token.starts_with('$') {
+                self.input = token;
+                self.pos = 0;
+                result.push_str(&self.expand_variable());
+            } else {
+                result.push_str(&token);
             }
         }
 
         result
+    }
+
+    fn expand_home_str(&mut self, path: &str) -> String {
+        self.input = path.to_string();
+        self.pos = 0;
+        self.expand_home()
     }
 
     pub fn expand_variable(&mut self) -> String {
@@ -86,12 +100,21 @@ impl EnvManager {
     pub fn expand_home(&mut self) -> String {
         let path = self.take_while(|c| !c.is_whitespace());
 
-        if path.is_empty() || path.starts_with('/') {
+        if path.is_empty() {
+            if let Ok(home) = std::env::var("HOME") {
+                return home;
+            }
+            return "~".to_string();
+        }
+
+        let path = if path.starts_with('~') { &path[1..] } else { path.as_str() };
+
+        if path.starts_with('/') {
             if let Ok(home) = std::env::var("HOME") {
                 return format!("{home}{path}");
             }
         } else {
-            let (user, rest) = path.split_once('/').unwrap_or((&path, ""));
+            let (user, rest) = path.split_once('/').unwrap_or((path, ""));
             #[cfg(unix)]
             {
                 if let Ok(username) = std::ffi::CString::new(user) {

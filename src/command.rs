@@ -3,6 +3,7 @@ pub use super::lua::LuaState;
 use crate::{
     env::EnvManager,
     models::{Command, InternalCommand},
+    shell::tokenizer::Tokenizer,
     shell::TishShell,
 };
 
@@ -15,39 +16,44 @@ use std::{
     process::ExitCode,
 };
 
+#[derive(Clone)]
 pub struct TishCommand {
-    pub program: String,
     args: Vec<String>,
     background: bool,
+
+    pub program: String,
+    pub pipe_to: Option<Box<TishCommand>>,
+    pub redirect_in: Option<String>,
+    pub redirect_out: Option<(String, bool)>,
 }
 
 impl TishCommand {
     pub fn parse(input: &str) -> Vec<Self> {
-        let parse = |part| {
-            let expanded = EnvManager::new(part).expand();
-            let mut tokens = Self::tokenize(&expanded);
+        if input.trim().is_empty() {
+            return vec![];
+        }
 
-            if tokens.is_empty() {
-                return None;
+        let parse_command = |cmd_str: &str| -> Option<Self> {
+            let expanded = EnvManager::new(cmd_str).expand();
+
+            if expanded.contains('|') {
+                let parts: Vec<&str> = expanded.split('|').map(str::trim).filter(|s| !s.is_empty()).collect();
+
+                let mut final_cmd = None;
+                for part in parts.into_iter().rev() {
+                    let mut current_cmd = Self::parse_single_command(Tokenizer::new(part));
+                    if let Some(next_cmd) = final_cmd {
+                        current_cmd.pipe_to = Some(Box::new(next_cmd));
+                    }
+                    final_cmd = Some(current_cmd);
+                }
+                final_cmd
+            } else {
+                Some(Self::parse_single_command(Tokenizer::new(&expanded)))
             }
-
-            let background = tokens.last().map_or(false, |last| last == "&");
-            if background {
-                tokens.pop();
-            }
-
-            if tokens.is_empty() {
-                return None;
-            }
-
-            Some(Self {
-                program: tokens[0].to_string(),
-                args: tokens[1..].iter().map(|s| s.to_string()).collect(),
-                background,
-            })
         };
 
-        input.split("&&").filter_map(parse).collect()
+        input.split("&&").map(str::trim).filter(|s| !s.is_empty()).filter_map(parse_command).collect()
     }
 
     pub async fn execute(&self, shell: &TishShell) -> Result<ExitCode> {
@@ -188,48 +194,57 @@ impl TishCommand {
         TishCommand::parse(&line)
     }
 
-    fn tokenize(input: &str) -> Vec<String> {
-        let mut tokens = Vec::new();
-        let mut current_token = String::new();
-        let mut chars = input.chars().peekable();
-        let mut in_quotes = false;
-        let mut quote_char = None;
-        let mut escaped = false;
+    fn parse_single_command(mut tokenizer: Tokenizer) -> Self {
+        let tokens = if tokenizer.has_redirection() { tokenizer.args_before_redirection() } else { tokenizer.get_args() };
 
-        while let Some(c) = chars.next() {
-            if escaped {
-                current_token.push(c);
-                escaped = false;
-                continue;
-            }
+        if tokens.is_empty() {
+            return Self {
+                program: String::new(),
+                args: Vec::new(),
+                background: false,
+                pipe_to: None,
+                redirect_in: None,
+                redirect_out: None,
+            };
+        }
 
-            match c {
-                '\\' => escaped = true,
-                '"' | '\'' => {
-                    if !in_quotes {
-                        in_quotes = true;
-                        quote_char = Some(c);
-                    } else if Some(c) == quote_char {
-                        in_quotes = false;
-                        quote_char = None;
-                    } else {
-                        current_token.push(c);
+        let program = tokens[0].clone();
+        let args = tokens[1..].to_vec();
+
+        let background = args.last().map_or(false, |last| last == "&");
+        let args = if background { args[..args.len() - 1].to_vec() } else { args };
+
+        let mut redirect_in = None;
+        let mut redirect_out = None;
+
+        while !tokenizer.is_empty() {
+            match tokenizer.next() {
+                Some(op) if op == "<" => {
+                    if let Some(file) = tokenizer.next() {
+                        redirect_in = Some(file);
                     }
                 }
-                c if c.is_whitespace() && !in_quotes => {
-                    if !current_token.is_empty() {
-                        tokens.push(current_token.clone());
-                        current_token.clear();
+                Some(op) if op == ">" => {
+                    if let Some(file) = tokenizer.next() {
+                        redirect_out = Some((file, false));
                     }
                 }
-                _ => current_token.push(c),
+                Some(op) if op == ">>" => {
+                    if let Some(file) = tokenizer.next() {
+                        redirect_out = Some((file, true));
+                    }
+                }
+                _ => {}
             }
         }
 
-        if !current_token.is_empty() {
-            tokens.push(current_token);
+        Self {
+            program,
+            args,
+            background,
+            pipe_to: None,
+            redirect_in,
+            redirect_out,
         }
-
-        tokens
     }
 }

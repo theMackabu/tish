@@ -1,5 +1,5 @@
 use crate::shell::highlight;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
 use std::{collections::HashMap, env, fs, path::Path, sync::Arc};
 use tokio::sync::mpsc;
@@ -189,6 +189,7 @@ impl Completer for TishHelper {
         self.update_command_status(line);
         let (start, _) = line[..pos].rsplit_once(char::is_whitespace).map_or((0, line), |(_, w)| (pos - w.len(), w));
         let completions = self.get_completions(line);
+        self.update_command_status(line);
         Ok((start, completions))
     }
 }
@@ -248,16 +249,36 @@ impl AsyncLineReader {
     pub fn new() -> Result<Self> {
         let (request_tx, mut request_rx) = mpsc::channel::<Operation>(32);
         let (response_tx, response_rx) = mpsc::channel::<Receiver>(32);
-        let config = Config::builder().color_mode(rustyline::ColorMode::Enabled).completion_type(rustyline::CompletionType::List).build();
+
+        let config = Config::builder()
+            .history_ignore_dups(true)?
+            .color_mode(rustyline::ColorMode::Enabled)
+            .completion_type(rustyline::CompletionType::List)
+            .build();
 
         let mut editor: Readline<TishHelper> = Readline::with_config(config)?;
         editor.set_helper(Some(TishHelper::new()));
+
+        let history_file = {
+            let mut file = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
+            file.push(".tish_history");
+            file
+        };
+
+        if history_file.exists() {
+            if let Err(e) = editor.load_history(&history_file) {
+                eprintln!("Failed to load history: {}", e);
+            }
+        }
 
         std::thread::spawn(move || {
             while let Some(prompt) = request_rx.blocking_recv() {
                 match prompt {
                     Operation::Readline(prompt) => {
                         let result = editor.readline(&prompt);
+                        if let Err(e) = editor.save_history(&history_file) {
+                            eprintln!("Failed to save history: {}", e);
+                        }
                         if let Err(e) = response_tx.blocking_send(result) {
                             eprintln!("Failed to send readline result: {}", e);
                             break;
@@ -268,6 +289,9 @@ impl AsyncLineReader {
                             eprintln!("Failed to read history: {}", e);
                             break;
                         };
+                        if let Err(e) = editor.save_history(&history_file) {
+                            eprintln!("Failed to save history: {}", e);
+                        }
                     }
                 }
             }
