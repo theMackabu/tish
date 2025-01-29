@@ -35,6 +35,7 @@ struct TishHelper {
     bracket_highlighter: MatchingBracketHighlighter,
     validator: MatchingBracketValidator,
     command_cache: Arc<RwLock<HashMap<String, bool>>>,
+    current_line: Arc<RwLock<String>>,
 }
 
 impl TishHelper {
@@ -44,6 +45,7 @@ impl TishHelper {
             bracket_highlighter: MatchingBracketHighlighter::new(),
             validator: MatchingBracketValidator::new(),
             command_cache: Arc::new(RwLock::new(HashMap::new())),
+            current_line: Arc::new(RwLock::new(String::new())),
         }
     }
 
@@ -204,6 +206,8 @@ impl Hinter for TishHelper {
             return None;
         }
 
+        *self.current_line.write() = line.to_string();
+
         let completions = self.get_completions(line, ctx);
         if let Some(hint) = completions.iter().find(|s| s.starts_with(line)) {
             return Some(hint.strip_prefix(line).unwrap_or(hint).to_string());
@@ -238,7 +242,8 @@ impl Highlighter for TishHelper {
     }
 
     fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
-        if hint.contains(' ') {
+        let current_line = self.current_line.read();
+        if current_line.contains(' ') {
             std::borrow::Cow::Owned(format!("\x1b[90m {hint}\x1b[0m"))
         } else {
             std::borrow::Cow::Owned(format!("\x1b[90m{hint}\x1b[0m"))
