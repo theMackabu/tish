@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use anyhow::Result;
 use chrono::{DateTime, Local, TimeZone};
 
@@ -35,6 +37,7 @@ struct ColumnWidths {
 
 pub fn run(args: &Vec<String>) -> Result<ExitCode> {
     let mut table = false;
+    let mut numbers = false;
     let mut show_all = false;
     let mut metadata = false;
     let mut path = PathBuf::from(".");
@@ -43,6 +46,7 @@ pub fn run(args: &Vec<String>) -> Result<ExitCode> {
         args: args.into_iter(),
         options: {
             l => table = true,
+            n => numbers = true,
             m => metadata = true,
             a => show_all = true,
             h => {
@@ -62,7 +66,7 @@ pub fn run(args: &Vec<String>) -> Result<ExitCode> {
     let entries = read_directory(&path, show_all)?;
 
     if table {
-        print_table_entries(&entries, metadata)?;
+        print_table_entries(&entries, metadata, numbers)?;
     } else {
         print_standard_entries(&entries)?;
     }
@@ -71,7 +75,7 @@ pub fn run(args: &Vec<String>) -> Result<ExitCode> {
 }
 
 fn print_usage() {
-    println!("usage: ls [-alm] [path]");
+    println!("usage: ls [-alnm] [path]");
 }
 
 fn read_directory(path: &Path, show_all: bool) -> std::io::Result<Vec<Entry>> {
@@ -160,19 +164,31 @@ fn print_standard_entries(entries: &[Entry]) -> std::io::Result<()> {
     Ok(())
 }
 
-fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Result<()> {
-    let widths = calculate_column_widths(entries);
-    let grey = "\x1b[38;5;240m";
-    let reset = "\x1b[0m";
+fn print_table_entries(entries: &[Entry], show_metadata: bool, show_numbers: bool) -> std::io::Result<()> {
+    const grey: &'static str = "\x1b[38;5;240m";
+    const yellow: &'static str = "\x1b[33m";
+    const light_pink: &'static str = "\x1b[38;5;217m";
+    const cyan: &'static str = "\x1b[36m";
+    const light_cyan: &'static str = "\x1b[96m";
+    const light_grey: &'static str = "\x1b[37m";
+    const light_green: &'static str = "\x1b[92m";
+    const light_magenta: &'static str = "\x1b[95m";
+    const reset: &'static str = "\x1b[0m";
 
-    let mut header = format!(
-        "{}╭{}┬{}┬{}┬{}",
-        grey,
+    let widths = calculate_column_widths(entries);
+    let num_width = if show_numbers { entries.len().to_string().len().max(1) } else { 0 };
+
+    let mut header = format!("{}╭", grey);
+    if show_numbers {
+        header.push_str(&format!("{}┬", "─".repeat(num_width + 2)));
+    }
+    header.push_str(&format!(
+        "{}┬{}┬{}┬{}",
         "─".repeat(widths.name + 4),
         "─".repeat(widths.size + 2),
         "─".repeat(widths.file_type + 2),
         "─".repeat(widths.permissions + 2)
-    );
+    ));
 
     if show_metadata {
         header.push_str(&format!("┬{}┬{}", "─".repeat(12), "─".repeat(16)));
@@ -180,40 +196,46 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Resul
     header.push_str(&format!("╮{}", reset));
     println!("{}", header);
 
-    let mut titles = format!(
-        "{}│{} {:<width_name$} {}│{} {:<width_size$} {}│{} {:<width_type$} {}│{} {:<width_perm$}",
-        grey,
-        reset,
+    let mut titles = format!("{}│", grey);
+    if show_numbers {
+        titles.push_str(&format!("{} {:<width_num$} {}│", cyan, "#", grey, width_num = num_width));
+    }
+    titles.push_str(&format!(
+        "{} {:<width_name$} {}│{} {:<width_size$} {}│{} {:<width_type$} {}│{} {:<width_perm$}",
+        yellow,
         "name",
         grey,
-        reset,
+        yellow,
         "size",
         grey,
-        reset,
+        yellow,
         "type",
         grey,
-        reset,
+        yellow,
         "permissions",
         width_name = widths.name + 2,
         width_size = widths.size,
         width_type = widths.file_type,
         width_perm = widths.permissions + if show_metadata { 0 } else { 1 }
-    );
+    ));
 
     if show_metadata {
-        titles.push_str(&format!(" {}│{} {:<10} {}│{} {:<14} ", grey, reset, "user", grey, reset, "modified"));
+        titles.push_str(&format!(" {}│{} {:<10} {}│{} {:<14} ", grey, yellow, "user", grey, yellow, "modified"));
     }
     titles.push_str(&format!("{}│{}", grey, reset));
     println!("{}", titles);
 
-    let mut separator = format!(
-        "{}├{}┼{}┼{}┼{}",
-        grey,
+    let mut separator = format!("{}├", grey);
+    if show_numbers {
+        separator.push_str(&format!("{}┼", "─".repeat(num_width + 2)));
+    }
+    separator.push_str(&format!(
+        "{}┼{}┼{}┼{}",
         "─".repeat(widths.name + 4),
         "─".repeat(widths.size + 2),
         "─".repeat(widths.file_type + 2),
         "─".repeat(widths.permissions + 2)
-    );
+    ));
 
     if show_metadata {
         separator.push_str(&format!("┼{}┼{}", "─".repeat(12), "─".repeat(16)));
@@ -221,46 +243,52 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool) -> std::io::Resul
     separator.push_str(&format!("┤{}", reset));
     println!("{}", separator);
 
-    for entry in entries {
-        let mut line = format!(
-            "{}│{} {}{}{} {:<width_name$} {}│{} {:>width_size$} {}│{} {:<width_type$} {}│{} \
+    for (idx, entry) in entries.iter().enumerate() {
+        let mut line = format!("{}│", grey);
+        if show_numbers {
+            line.push_str(&format!("{} {:<width_num$} {}│", light_cyan, idx, grey, width_num = num_width));
+        }
+        line.push_str(&format!(
+            "{} {}{}{} {:<width_name$} {}│{} {:>width_size$} {}│{} {:<width_type$} {}│{} \
              {:<width_perm$}",
-            grey,
             reset,
             entry.color,
             entry.icon,
             "\x1b[0m",
             entry.name,
             grey,
-            reset,
+            cyan,
             entry.size,
             grey,
-            reset,
+            light_grey,
             entry.file_type,
             grey,
-            reset,
+            light_green,
             entry.permissions,
             width_name = widths.name,
             width_size = widths.size,
             width_type = widths.file_type,
             width_perm = widths.permissions + if show_metadata { 0 } else { 1 }
-        );
+        ));
 
         if show_metadata {
-            line.push_str(&format!(" {}│{} {:<10} {}│{} {:<14} ", grey, reset, entry.username, grey, reset, entry.modified));
+            line.push_str(&format!(" {}│{} {:<10} {}│{} {:<14} ", grey, light_pink, entry.username, grey, light_magenta, entry.modified));
         }
         line.push_str(&format!("{}│{}", grey, reset));
         println!("{}", line);
     }
 
-    let mut footer = format!(
-        "{}╰{}┴{}┴{}┴{}",
-        grey,
+    let mut footer = format!("{}╰", grey);
+    if show_numbers {
+        footer.push_str(&format!("{}┴", "─".repeat(num_width + 2)));
+    }
+    footer.push_str(&format!(
+        "{}┴{}┴{}┴{}",
         "─".repeat(widths.name + 4),
         "─".repeat(widths.size + 2),
         "─".repeat(widths.file_type + 2),
         "─".repeat(widths.permissions + 2)
-    );
+    ));
 
     if show_metadata {
         footer.push_str(&format!("┴{}┴{}", "─".repeat(12), "─".repeat(16)));
