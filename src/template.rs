@@ -35,6 +35,22 @@ const ANSI_COLORS: &[(&str, &str)] = &[
     ("bright_magenta", "\x1b[95m"),
     ("bright_cyan", "\x1b[96m"),
     ("bright_white", "\x1b[97m"),
+    ("on_black", "\x1b[40m"),
+    ("on_red", "\x1b[41m"),
+    ("on_green", "\x1b[42m"),
+    ("on_yellow", "\x1b[43m"),
+    ("on_blue", "\x1b[44m"),
+    ("on_magenta", "\x1b[45m"),
+    ("on_cyan", "\x1b[46m"),
+    ("on_white", "\x1b[47m"),
+    ("on_bright_black", "\x1b[100m"),
+    ("on_bright_red", "\x1b[101m"),
+    ("on_bright_green", "\x1b[102m"),
+    ("on_bright_yellow", "\x1b[103m"),
+    ("on_bright_blue", "\x1b[104m"),
+    ("on_bright_magenta", "\x1b[105m"),
+    ("on_bright_cyan", "\x1b[106m"),
+    ("on_bright_white", "\x1b[107m"),
 ];
 
 impl<'c> Template<'c> {
@@ -54,9 +70,7 @@ impl<'c> Template<'c> {
         }
     }
 
-    pub fn insert(&mut self, key: &'c str, value: String) {
-        self.context.insert(key, value);
-    }
+    pub fn insert(&mut self, key: &'c str, value: String) { self.context.insert(key, value); }
 
     pub fn render(&self) -> String {
         let mut result = self.template.clone();
@@ -137,11 +151,14 @@ impl<'c> Template<'c> {
     }
 
     fn parse_hex_color(hex: &str) -> Option<String> {
-        if !hex.starts_with('#') {
+        let (is_background, hex) = if hex.starts_with("on_#") {
+            (true, hex.trim_start_matches("on_#"))
+        } else if hex.starts_with('#') {
+            (false, hex.trim_start_matches('#'))
+        } else {
             return None;
-        }
+        };
 
-        let hex = hex.trim_start_matches('#');
         if hex.len() != 6 {
             return None;
         }
@@ -150,7 +167,11 @@ impl<'c> Template<'c> {
         let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
         let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
 
-        Some(format!("\x1b[38;2;{};{};{}m", r, g, b))
+        if is_background {
+            Some(format!("\x1b[48;2;{};{};{}m", r, g, b))
+        } else {
+            Some(format!("\x1b[38;2;{};{};{}m", r, g, b))
+        }
     }
 
     fn execute_command(&self, cmd: &str) -> String {
