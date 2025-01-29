@@ -321,13 +321,30 @@ impl Highlighter {
                     is_first_word = false;
                 }
                 '|' | '>' | '<' | '&' | ';' | '=' | '\\' => {
+                    let start = start_pos;
+                    let mut content = c.to_string();
+                    let mut end = start;
+
+                    if let Some(&(pos, next_c)) = chars.peek() {
+                        match (c, next_c) {
+                            ('&', '&') | ('|', '|') | ('>', '>') | ('<', '<') => {
+                                content.push(next_c);
+                                end = pos;
+                                chars.next();
+                            }
+                            _ => {}
+                        }
+                    }
+
                     tokens.push(Token {
                         token_type: TokenType::Operator,
-                        start: start_pos,
-                        end: start_pos + c.len_utf8(),
-                        content: c.to_string(),
+                        start,
+                        end: end + 1,
+                        content,
                     });
+
                     is_first_word = true;
+                    in_whitespace = true;
                 }
                 _ => {}
             }
