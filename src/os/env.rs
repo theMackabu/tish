@@ -7,9 +7,7 @@ pub struct EnvManager {
 }
 
 impl EnvManager {
-    pub fn new(input: &str) -> Self {
-        Self { input: input.to_string(), pos: 0 }
-    }
+    pub fn new(input: &str) -> Self { Self { input: input.to_string(), pos: 0 } }
 
     pub fn expand(&mut self) -> String {
         let mut tokenizer = Tokenizer::new(&self.input);
@@ -54,9 +52,13 @@ impl EnvManager {
     }
 
     pub fn expand_variable(&mut self) -> String {
+        self.next_char();
+
         let var_name = if self.peek_char() == Some('{') {
             self.next_char();
-            self.take_until('}')
+            let name = self.take_until('}');
+            self.next_char();
+            name
         } else {
             self.take_while(|c| c.is_alphanumeric() || c == '_')
         };
@@ -163,7 +165,5 @@ impl EnvManager {
         result
     }
 
-    fn take_until(&mut self, end: char) -> String {
-        self.take_while(|c| c != end)
-    }
+    fn take_until(&mut self, end: char) -> String { self.take_while(|c| c != end) }
 }
