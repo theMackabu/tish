@@ -75,7 +75,7 @@ pub fn run(args: &Vec<String>) -> Result<ExitCode> {
 }
 
 fn print_usage() {
-    println!("usage: ls [-alnm] [path]");
+    println!("usage: ls [-alnm] [path ...]");
 }
 
 fn read_directory(path: &Path, show_all: bool) -> std::io::Result<Vec<Entry>> {
@@ -167,8 +167,8 @@ fn print_standard_entries(entries: &[Entry]) -> std::io::Result<()> {
 fn print_table_entries(entries: &[Entry], show_metadata: bool, show_numbers: bool) -> std::io::Result<()> {
     const grey: &'static str = "\x1b[38;5;240m";
     const yellow: &'static str = "\x1b[33m";
-    const light_pink: &'static str = "\x1b[38;5;217m";
     const cyan: &'static str = "\x1b[36m";
+    const light_pink: &'static str = "\x1b[38;5;217m";
     const light_cyan: &'static str = "\x1b[96m";
     const light_grey: &'static str = "\x1b[37m";
     const light_green: &'static str = "\x1b[92m";
@@ -182,16 +182,18 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool, show_numbers: boo
     if show_numbers {
         header.push_str(&format!("{}┬", "─".repeat(num_width + 2)));
     }
-    header.push_str(&format!(
-        "{}┬{}┬{}┬{}",
-        "─".repeat(widths.name + 4),
-        "─".repeat(widths.size + 2),
-        "─".repeat(widths.file_type + 2),
-        "─".repeat(widths.permissions + 2)
-    ));
+    header.push_str(&format!("{}┬{}", "─".repeat(widths.name + 4), "─".repeat(widths.size + 2)));
 
     if show_metadata {
-        header.push_str(&format!("┬{}┬{}", "─".repeat(12), "─".repeat(16)));
+        header.push_str(&format!(
+            "┬{}┬{}┬{}┬{}",
+            "─".repeat(widths.file_type + 2),
+            "─".repeat(widths.permissions + 2),
+            "─".repeat(12),
+            "─".repeat(16)
+        ));
+    } else {
+        header.push_str(&format!("┬{}", "─".repeat(16)));
     }
     header.push_str(&format!("╮{}", reset));
     println!("{}", header);
@@ -201,44 +203,52 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool, show_numbers: boo
         titles.push_str(&format!("{} {:<width_num$} {}│", cyan, "#", grey, width_num = num_width));
     }
     titles.push_str(&format!(
-        "{} {:<width_name$} {}│{} {:<width_size$} {}│{} {:<width_type$} {}│{} {:<width_perm$}",
+        "{} {:<width_name$} {}│{} {:<width_size$} {}│",
         yellow,
         "name",
         grey,
         yellow,
         "size",
         grey,
-        yellow,
-        "type",
-        grey,
-        yellow,
-        "permissions",
         width_name = widths.name + 2,
-        width_size = widths.size,
-        width_type = widths.file_type,
-        width_perm = widths.permissions + if show_metadata { 0 } else { 1 }
+        width_size = widths.size
     ));
 
     if show_metadata {
-        titles.push_str(&format!(" {}│{} {:<10} {}│{} {:<14} ", grey, yellow, "user", grey, yellow, "modified"));
+        titles.push_str(&format!(
+            "{} {:<width_type$} {}│{} {:<width_perm$} {}│{} {:<10} {}│",
+            yellow,
+            "type",
+            grey,
+            yellow,
+            "permissions",
+            grey,
+            yellow,
+            "user",
+            grey,
+            width_type = widths.file_type,
+            width_perm = widths.permissions
+        ));
     }
-    titles.push_str(&format!("{}│{}", grey, reset));
+    titles.push_str(&format!("{} {:<14} {}│{}", yellow, "modified", grey, reset));
     println!("{}", titles);
 
     let mut separator = format!("{}├", grey);
     if show_numbers {
         separator.push_str(&format!("{}┼", "─".repeat(num_width + 2)));
     }
-    separator.push_str(&format!(
-        "{}┼{}┼{}┼{}",
-        "─".repeat(widths.name + 4),
-        "─".repeat(widths.size + 2),
-        "─".repeat(widths.file_type + 2),
-        "─".repeat(widths.permissions + 2)
-    ));
+    separator.push_str(&format!("{}┼{}", "─".repeat(widths.name + 4), "─".repeat(widths.size + 2)));
 
     if show_metadata {
-        separator.push_str(&format!("┼{}┼{}", "─".repeat(12), "─".repeat(16)));
+        separator.push_str(&format!(
+            "┼{}┼{}┼{}┼{}",
+            "─".repeat(widths.file_type + 2),
+            "─".repeat(widths.permissions + 2),
+            "─".repeat(12),
+            "─".repeat(16)
+        ));
+    } else {
+        separator.push_str(&format!("┼{}", "─".repeat(16)));
     }
     separator.push_str(&format!("┤{}", reset));
     println!("{}", separator);
@@ -249,8 +259,7 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool, show_numbers: boo
             line.push_str(&format!("{} {:<width_num$} {}│", light_cyan, idx, grey, width_num = num_width));
         }
         line.push_str(&format!(
-            "{} {}{}{} {:<width_name$} {}│{} {:>width_size$} {}│{} {:<width_type$} {}│{} \
-             {:<width_perm$}",
+            "{} {}{}{} {:<width_name$} {}│{} {:>width_size$} {}│",
             reset,
             entry.color,
             entry.icon,
@@ -260,21 +269,27 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool, show_numbers: boo
             cyan,
             entry.size,
             grey,
-            light_grey,
-            entry.file_type,
-            grey,
-            light_green,
-            entry.permissions,
             width_name = widths.name,
-            width_size = widths.size,
-            width_type = widths.file_type,
-            width_perm = widths.permissions + if show_metadata { 0 } else { 1 }
+            width_size = widths.size
         ));
 
         if show_metadata {
-            line.push_str(&format!(" {}│{} {:<10} {}│{} {:<14} ", grey, light_pink, entry.username, grey, light_magenta, entry.modified));
+            line.push_str(&format!(
+                "{} {:<width_type$} {}│{} {:<width_perm$} {}│{} {:<10} {}│",
+                light_magenta,
+                entry.file_type,
+                grey,
+                light_green,
+                entry.permissions,
+                grey,
+                light_pink,
+                entry.username,
+                grey,
+                width_type = widths.file_type,
+                width_perm = widths.permissions
+            ));
         }
-        line.push_str(&format!("{}│{}", grey, reset));
+        line.push_str(&format!("{} {:<14} {}│{}", light_grey, entry.modified, grey, reset));
         println!("{}", line);
     }
 
@@ -282,16 +297,18 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool, show_numbers: boo
     if show_numbers {
         footer.push_str(&format!("{}┴", "─".repeat(num_width + 2)));
     }
-    footer.push_str(&format!(
-        "{}┴{}┴{}┴{}",
-        "─".repeat(widths.name + 4),
-        "─".repeat(widths.size + 2),
-        "─".repeat(widths.file_type + 2),
-        "─".repeat(widths.permissions + 2)
-    ));
+    footer.push_str(&format!("{}┴{}", "─".repeat(widths.name + 4), "─".repeat(widths.size + 2)));
 
     if show_metadata {
-        footer.push_str(&format!("┴{}┴{}", "─".repeat(12), "─".repeat(16)));
+        footer.push_str(&format!(
+            "┴{}┴{}┴{}┴{}",
+            "─".repeat(widths.file_type + 2),
+            "─".repeat(widths.permissions + 2),
+            "─".repeat(12),
+            "─".repeat(16)
+        ));
+    } else {
+        footer.push_str(&format!("┴{}", "─".repeat(16)));
     }
     footer.push_str(&format!("╯{}", reset));
     println!("{}", footer);
@@ -301,13 +318,13 @@ fn print_table_entries(entries: &[Entry], show_metadata: bool, show_numbers: boo
 
 fn format_size(size: u64) -> String {
     if size >= 1024 * 1024 * 1024 {
-        format!("{:>5.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+        format!("{:>5.1}gb", size as f64 / (1024.0 * 1024.0 * 1024.0))
     } else if size >= 1024 * 1024 {
-        format!("{:>5.1} MB", size as f64 / (1024.0 * 1024.0))
+        format!("{:>5.1}mb", size as f64 / (1024.0 * 1024.0))
     } else if size >= 1024 {
-        format!("{:>5.1} KB", size as f64 / 1024.0)
+        format!("{:>5.1}kb", size as f64 / 1024.0)
     } else {
-        format!("{:>6} B", size)
+        format!("{:>6}b", size)
     }
 }
 
