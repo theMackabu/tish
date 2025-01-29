@@ -40,7 +40,7 @@ pub fn run(args: &Vec<String>) -> Result<ExitCode> {
     let mut numbers = false;
     let mut show_all = false;
     let mut metadata = false;
-    let mut path = PathBuf::from(".");
+    let mut paths = Vec::new();
 
     argument! {
         args: args.into_iter(),
@@ -55,7 +55,7 @@ pub fn run(args: &Vec<String>) -> Result<ExitCode> {
             }
         },
         command: |arg| {
-            path = PathBuf::from(arg)
+            paths.push(PathBuf::from(arg))
         },
         on_invalid: |c| {
             eprintln!("Unknown option: -{c}");
@@ -63,12 +63,30 @@ pub fn run(args: &Vec<String>) -> Result<ExitCode> {
         }
     }
 
-    let entries = read_directory(&path, show_all)?;
+    if paths.is_empty() {
+        paths.push(PathBuf::from("."));
+    }
 
-    if table {
-        print_table_entries(&entries, metadata, numbers)?;
-    } else {
-        print_standard_entries(&entries)?;
+    for (i, path) in paths.iter().enumerate() {
+        if paths.len() > 1 {
+            if i > 0 {
+                println!();
+            }
+            println!("{}:", path.display());
+        }
+
+        match read_directory(path, show_all) {
+            Ok(entries) => {
+                if table {
+                    print_table_entries(&entries, metadata, numbers)?;
+                } else {
+                    print_standard_entries(&entries)?;
+                }
+            }
+            Err(e) => {
+                eprintln!("Error reading {}: {}", path.display(), e);
+            }
+        }
     }
 
     Ok(ExitCode::SUCCESS)
