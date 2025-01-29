@@ -177,7 +177,6 @@ impl TishShell {
                 readline = rl.async_readline(&prompt) => {
                     match readline {
                         Ok(line) => {
-                            rl.add_history_entry(&line).await?;
                             if let Err(_) = self.lua.eval(&line) {
                                 self.execute_command(&line).await;
                             }

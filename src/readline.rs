@@ -15,7 +15,7 @@ use rustyline::{
     error::ReadlineError,
     highlight::{CmdKind, Highlighter, MatchingBracketHighlighter},
     hint::Hinter,
-    history::{FileHistory, History, SearchDirection, SearchResult},
+    history::{FileHistory, History, SearchDirection},
     validate::{MatchingBracketValidator, Validator},
     CompletionType, Config, Context, Editor, Helper,
 };
@@ -23,15 +23,10 @@ use rustyline::{
 type Readline<T> = Editor<T, FileHistory>;
 type Receiver = Result<String, ReadlineError>;
 
-enum Operation {
-    Readline(String),
-    AddHistory(String),
-}
-
 pub struct AsyncLineReader {
     buffer: String,
     continuation: bool,
-    request_tx: mpsc::Sender<Operation>,
+    request_tx: mpsc::Sender<String>,
     response_rx: mpsc::Receiver<Receiver>,
 }
 
@@ -69,6 +64,10 @@ impl TishHelper {
 
         for index in (0..history.len()).rev() {
             if let Ok(Some(result)) = history.get(index, SearchDirection::Forward) {
+                if result.entry.starts_with(word) {
+                    matches.insert(result.entry.to_string());
+                }
+
                 let words: Vec<&str> = result.entry.split_whitespace().collect();
                 if let Some(first_word) = words.first() {
                     if first_word.starts_with(word) {
@@ -201,8 +200,13 @@ impl Hinter for TishHelper {
     type Hint = String;
 
     fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<String> {
-        if pos < line.len() {
+        if pos < line.len() || line.trim().is_empty() {
             return None;
+        }
+
+        let completions = self.get_completions(line, ctx);
+        if let Some(hint) = completions.iter().find(|s| s.starts_with(line)) {
+            return Some(hint.strip_prefix(line).unwrap_or(hint).to_string());
         }
 
         let word = line.rsplit_once(char::is_whitespace).map_or(line, |(_, w)| w);
@@ -210,14 +214,12 @@ impl Hinter for TishHelper {
             return None;
         }
 
-        let completions = self.get_completions(line, ctx);
         completions.first().map(|s| {
-            let hint = if let Some(common) = line.rsplit_once(char::is_whitespace) {
+            if let Some(common) = line.rsplit_once(char::is_whitespace) {
                 s.strip_prefix(common.1).unwrap_or(s).to_string()
             } else {
                 s.strip_prefix(line).unwrap_or(s).to_string()
-            };
-            return hint;
+            }
         })
     }
 }
@@ -227,14 +229,20 @@ impl Validator for TishHelper {
 }
 
 impl Highlighter for TishHelper {
-    fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> { std::borrow::Cow::Owned(format!("\x1b[90m{hint}\x1b[0m")) }
-
     fn highlight_candidate<'c>(&self, candidate: &'c str, _: CompletionType) -> std::borrow::Cow<'c, str> { std::borrow::Cow::Borrowed(candidate) }
 
     fn highlight<'l>(&self, line: &'l str, _: usize) -> std::borrow::Cow<'l, str> {
         self.update_command_status(line);
         let cache = self.command_cache.read();
         self.highlighter.highlight_with_cache(line, &cache).into()
+    }
+
+    fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
+        if hint.contains(' ') {
+            std::borrow::Cow::Owned(format!("\x1b[90m {hint}\x1b[0m"))
+        } else {
+            std::borrow::Cow::Owned(format!("\x1b[90m{hint}\x1b[0m"))
+        }
     }
 
     fn highlight_char(&self, line: &str, pos: usize, kind: CmdKind) -> bool {
@@ -257,10 +265,11 @@ impl Highlighter for TishHelper {
 
 impl AsyncLineReader {
     pub fn new() -> Result<Self> {
-        let (request_tx, mut request_rx) = mpsc::channel::<Operation>(32);
+        let (request_tx, mut request_rx) = mpsc::channel::<String>(32);
         let (response_tx, response_rx) = mpsc::channel::<Receiver>(32);
 
         let config = Config::builder()
+            .auto_add_history(true)
             .history_ignore_dups(true)?
             .color_mode(rustyline::ColorMode::Enabled)
             .completion_type(rustyline::CompletionType::Fuzzy)
@@ -287,26 +296,13 @@ impl AsyncLineReader {
 
         std::thread::spawn(move || {
             while let Some(prompt) = request_rx.blocking_recv() {
-                match prompt {
-                    Operation::Readline(prompt) => {
-                        let result = editor.readline(&prompt);
-                        if let Err(e) = editor.save_history(&history_file) {
-                            eprintln!("Failed to save history: {}", e);
-                        }
-                        if let Err(e) = response_tx.blocking_send(result) {
-                            eprintln!("Failed to send readline result: {}", e);
-                            break;
-                        }
-                    }
-                    Operation::AddHistory(line) => {
-                        if let Err(e) = editor.add_history_entry(line) {
-                            eprintln!("Failed to read history: {}", e);
-                            break;
-                        };
-                        if let Err(e) = editor.save_history(&history_file) {
-                            eprintln!("Failed to save history: {}", e);
-                        }
-                    }
+                let result = editor.readline(&prompt);
+                if let Err(e) = editor.save_history(&history_file) {
+                    eprintln!("Failed to save history: {}", e);
+                }
+                if let Err(e) = response_tx.blocking_send(result) {
+                    eprintln!("Failed to send readline result: {}", e);
+                    break;
                 }
             }
         });
@@ -324,16 +320,11 @@ impl AsyncLineReader {
         self.continuation = false;
     }
 
-    pub async fn add_history_entry(&mut self, line: &str) -> Result<std::process::ExitCode> {
-        self.request_tx.send(Operation::AddHistory(line.to_owned())).await.map_err(|_| ReadlineError::Interrupted)?;
-        Ok(std::process::ExitCode::SUCCESS)
-    }
-
     pub async fn async_readline(&mut self, prompt: &str) -> Result<String, ReadlineError> {
         loop {
             let current_prompt = if self.continuation { "> " } else { prompt };
 
-            self.request_tx.send(Operation::Readline(current_prompt.to_owned())).await.map_err(|_| ReadlineError::Interrupted)?;
+            self.request_tx.send(current_prompt.to_owned()).await.map_err(|_| ReadlineError::Interrupted)?;
 
             match self.response_rx.recv().await.unwrap_or(Err(ReadlineError::Interrupted)) {
                 Ok(line) => {
