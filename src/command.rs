@@ -1,8 +1,8 @@
 pub use super::lua::LuaState;
 
 use crate::{
-    env::EnvManager,
     models::{Command, InternalCommand},
+    os::env::EnvManager,
     shell::tokenizer::Tokenizer,
     shell::TishShell,
 };
@@ -65,7 +65,7 @@ impl TishCommand {
                 InternalCommand::Jobs => crate::JOBS.lock().expect("Able to lock jobs").list_jobs()?,
                 InternalCommand::Help => Self::handle_builtin_help()?,
                 InternalCommand::Kill => self.handle_builtin_kill().await?,
-                InternalCommand::External => self.execute_external().await?,
+                InternalCommand::External => self.execute_external(shell).await?,
                 InternalCommand::Script => shell.lua.eval_file(std::path::Path::new(&self.program))?,
                 InternalCommand::Pid => {
                     println!("{}", std::process::id());
@@ -80,7 +80,7 @@ impl TishCommand {
             Command::Cd => self.handle_builtin_cd()?,
             Command::Help => Self::handle_builtin_help()?,
             Command::Exit => std::process::exit(0),
-            Command::External => self.execute_external().await?,
+            Command::External => self.execute_external(shell).await?,
             Command::Script => shell.lua.eval_file(std::path::Path::new(&self.program))?,
             Command::Source => shell.lua.eval_file(Path::new(&self.args.get(0).ok_or_else(|| anyhow!("Could not determine source file"))?))?,
         };
@@ -88,7 +88,33 @@ impl TishCommand {
         Ok(result)
     }
 
-    async fn execute_external(&self) -> Result<ExitCode> {
+    async fn execute_external(&self, shell: &TishShell) -> Result<ExitCode> {
+        let config = shell.lua.get_config();
+        let auto_cd = config.read().auto_cd;
+
+        let path_str = if self.program.starts_with("~/") {
+            dirs::home_dir()
+                .map(|mut p| {
+                    p.push(&self.program[2..]);
+                    p
+                })
+                .unwrap_or_else(|| PathBuf::from(&self.program))
+        } else {
+            PathBuf::from(&self.program)
+        };
+
+        if auto_cd && path_str.is_dir() {
+            return TishCommand {
+                program: "cd".to_string(),
+                args: vec![path_str.to_string_lossy().into_owned()],
+                background: false,
+                pipe_to: None,
+                redirect_in: None,
+                redirect_out: None,
+            }
+            .handle_builtin_cd();
+        }
+
         if self.background {
             self.spawn_background_job()?;
             Ok(ExitCode::SUCCESS)

@@ -1,4 +1,9 @@
-use std::{collections::HashMap, env, os::unix::fs::PermissionsExt, path::Path};
+use std::{
+    collections::HashMap,
+    env,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub enum TokenType {
@@ -97,6 +102,29 @@ impl Highlighter {
         }
 
         result
+    }
+
+    fn expand_path(&self, path: &Path) -> Option<PathBuf> {
+        let path_str = path.to_string_lossy();
+        if path_str.starts_with("~/") {
+            if let Some(home_dir) = dirs::home_dir() {
+                let relative_path = path_str.strip_prefix("~/").unwrap_or(&path_str);
+                return Some(home_dir.join(relative_path));
+            }
+        } else if path.is_relative() {
+            if let Ok(current_dir) = std::env::current_dir() {
+                return Some(current_dir.join(path));
+            }
+        }
+        Some(path.to_path_buf())
+    }
+
+    fn is_directory(&self, path: &Path) -> bool {
+        if let Some(expanded_path) = self.expand_path(path) {
+            expanded_path.is_dir()
+        } else {
+            false
+        }
     }
 
     fn tokenize(&self, input: &str, command_cache: &HashMap<String, bool>) -> Vec<Token> {
@@ -236,6 +264,7 @@ impl Highlighter {
                     let start = start_pos;
                     let mut content = String::from(c);
                     let mut end = start;
+
                     while let Some(&(pos, next_c)) = chars.peek() {
                         if next_c.is_whitespace() || next_c == '\\' {
                             break;
@@ -245,20 +274,10 @@ impl Highlighter {
                         chars.next();
                     }
 
-                    let expanded_path = if content.starts_with("~/") {
-                        if let Some(home_dir) = dirs::home_dir() {
-                            let path = content.replace('~', home_dir.to_str().unwrap());
-                            Path::new(&path).to_path_buf()
-                        } else {
-                            Path::new(&content).to_path_buf()
-                        }
-                    } else {
-                        Path::new(&content).to_path_buf()
-                    };
-
+                    let path = Path::new(&content);
                     let token_type = if is_first_word {
                         if content.starts_with("./") || content.starts_with("../") {
-                            if expanded_path.exists() && expanded_path.metadata().map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false) {
+                            if path.exists() && path.metadata().map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false) {
                                 TokenType::ValidCommand
                             } else {
                                 TokenType::InvalidCommand
@@ -268,28 +287,12 @@ impl Highlighter {
                                 .get(&content)
                                 .map_or(TokenType::InvalidCommand, |&exists| if exists { TokenType::ValidCommand } else { TokenType::InvalidCommand })
                         }
-                    } else if cfg!(target_os = "macos") {
-                        let dir_exists = if let Ok(entries) = std::fs::read_dir(expanded_path.parent().unwrap_or(Path::new("."))) {
-                            entries.filter_map(Result::ok).any(|entry| {
-                                entry
-                                    .path()
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .eq_ignore_ascii_case(&expanded_path.file_name().unwrap_or_default().to_string_lossy())
-                            })
-                        } else {
-                            false
-                        };
-                        if dir_exists {
+                    } else {
+                        if self.is_directory(path) {
                             TokenType::Directory
                         } else {
                             TokenType::Argument
                         }
-                    } else if expanded_path.canonicalize().ok().map_or(false, |p| p.is_dir()) {
-                        TokenType::Directory
-                    } else {
-                        TokenType::Argument
                     };
 
                     tokens.push(Token {
@@ -300,7 +303,7 @@ impl Highlighter {
                     });
                     is_first_word = false;
                 }
-                '|' | '>' | '<' | '&' | ';' | '=' => {
+                '|' | '>' | '<' | '&' | ';' | '=' | '\\' => {
                     tokens.push(Token {
                         token_type: TokenType::Operator,
                         start: start_pos,

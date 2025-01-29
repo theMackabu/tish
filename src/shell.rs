@@ -4,8 +4,7 @@ pub mod tokenizer;
 use crate::{
     args::TishArgs,
     command::{LuaState, TishCommand},
-    env::EnvManager,
-    os::user,
+    os::{env::EnvManager, user},
     prelude::*,
     readline::AsyncLineReader,
     template::Template,

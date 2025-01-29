@@ -1,6 +1,5 @@
 mod args;
 mod command;
-mod env;
 mod jobs;
 mod lua;
 mod macros;
