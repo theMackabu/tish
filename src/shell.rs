@@ -33,6 +33,20 @@ pub struct TishShell {
 
 impl TishShell {
     pub async fn new(args: TishArgs) -> Result<Self> {
+        unsafe {
+            let shell_pid = libc::getpid();
+            if libc::setpgid(shell_pid, shell_pid) != 0 {
+                eprintln!("Failed to set shell process group");
+            }
+
+            if libc::tcsetpgrp(0, shell_pid) != 0 {
+                eprintln!("Failed to set initial terminal control");
+            }
+
+            libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+            libc::signal(libc::SIGTTIN, libc::SIG_IGN);
+        }
+
         let mut shell = Self {
             args: args.to_owned(),
             lua: LuaState::new()?,

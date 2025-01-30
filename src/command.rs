@@ -4,7 +4,7 @@ use crate::{
     cmd,
     models::{Command, InternalCommand},
     os::env::EnvManager,
-    shell::{signals::SignalHandler, tokenizer::Tokenizer, TishShell},
+    shell::{signals::*, tokenizer::Tokenizer, TishShell},
 };
 
 use anyhow::{anyhow, Result};
@@ -14,9 +14,9 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::atomic::Ordering,
 };
 
-#[derive(Clone)]
 pub struct TishCommand {
     args: Vec<String>,
     background: bool,
@@ -68,6 +68,7 @@ impl TishCommand {
                 InternalCommand::Kill => self.handle_builtin_kill().await?,
                 InternalCommand::External => self.execute_external(shell).await?,
                 InternalCommand::Script => shell.lua.eval_file(std::path::Path::new(&self.program))?,
+
                 InternalCommand::Pid => {
                     println!("{}", std::process::id());
                     return Ok(ExitCode::SUCCESS);
@@ -78,18 +79,36 @@ impl TishCommand {
         }
 
         let result = match command {
-            Command::Ls => match shell.lua.get_config().read().builtin_ls {
-                true => cmd::ls::run(&self.args)?,
-                false => self.execute_external(shell).await?,
-            },
             Command::Fg => self.handle_builtin_fg().await?,
             Command::Cd => self.handle_builtin_cd()?,
             Command::Help => Self::handle_builtin_help()?,
-            Command::Exit => std::process::exit(0),
             Command::Jobs => crate::JOBS.lock().expect("Able to lock jobs").list_jobs().await?,
             Command::External => self.execute_external(shell).await?,
             Command::Script => shell.lua.eval_file(std::path::Path::new(&self.program))?,
             Command::Source => shell.lua.eval_file(Path::new(&self.args.get(0).ok_or_else(|| anyhow!("Could not determine source file"))?))?,
+
+            Command::Ls => match shell.lua.get_config().read().builtin_ls {
+                true => cmd::ls::run(&self.args)?,
+                false => self.execute_external(shell).await?,
+            },
+
+            Command::Exit => {
+                CURRENT_FOREGROUND_PID.store(-1, Ordering::SeqCst);
+
+                if let Some(handler) = GLOBAL_SIGNAL_HANDLER.get() {
+                    if let Ok(mut info_guard) = handler.foreground_info.lock() {
+                        *info_guard = None;
+                    }
+                }
+
+                unsafe {
+                    libc::signal(SIGTSTP, libc::SIG_DFL);
+                    libc::signal(SIGCONT, libc::SIG_DFL);
+                    libc::signal(SIGINT, libc::SIG_DFL);
+                }
+
+                std::process::exit(0);
+            }
         };
 
         Ok(result)
@@ -139,7 +158,7 @@ impl TishCommand {
             handle.args(&args);
 
             if let Ok(mut manager) = crate::JOBS.try_lock() {
-                if let Err(err) = manager.add_job(&mut handle, program.clone(), args) {
+                if let Err(err) = manager.add_job(&mut handle, program, args) {
                     eprintln!("Failed to add background job: {err}");
                 } else {
                     if let Some(job) = manager.jobs.values().last() {
@@ -156,30 +175,48 @@ impl TishCommand {
 
     async fn spawn_foreground_job(&self, signal_handler: &SignalHandler) -> Result<ExitCode> {
         let command = self.resolve_command();
-        let mut child = tokio::process::Command::new(&command[0].program).args(&command[0].args).args(&self.args).spawn()?;
 
-        signal_handler.set_foreground_process(&child, &self.program, &self.args).await;
-        if let Some(pid) = child.id() {
-            SignalHandler::update_foreground_pid(Some(pid));
-        }
+        let mut cmd = tokio::process::Command::new(&command[0].program);
+        cmd.args(&command[0].args).args(&self.args);
 
         unsafe {
-            let shell_pgid = libc::getpgrp();
-            if let Some(child_pid) = child.id() {
-                libc::setpgid(child_pid as i32, child_pid as i32);
-                libc::tcsetpgrp(0, child_pid as i32);
+            cmd.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
 
-                let status = child.wait().await?;
-                libc::tcsetpgrp(0, shell_pgid);
+                libc::signal(SIGTSTP, libc::SIG_DFL);
+                libc::signal(SIGINT, libc::SIG_DFL);
+                libc::signal(SIGCONT, libc::SIG_DFL);
 
-                signal_handler.clear_foreground_process().await;
-                SignalHandler::update_foreground_pid(None);
+                Ok(())
+            });
+        }
 
-                return Ok(ExitCode::from(status.code().unwrap_or(0) as u8));
+        let mut child = cmd.spawn()?;
+        let pid = child.id().unwrap_or(0) as i32;
+
+        unsafe {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            if libc::tcsetpgrp(0, pid) != 0 {
+                eprintln!("Failed to set terminal foreground process group");
             }
         }
 
+        CURRENT_FOREGROUND_PID.store(pid, Ordering::SeqCst);
+        signal_handler.set_foreground_process(&child, &self.program, &self.args).await;
         let status = child.wait().await?;
+
+        unsafe {
+            let shell_pgid = libc::getpgrp();
+            if libc::tcsetpgrp(0, shell_pgid) != 0 {
+                eprintln!("Failed to return terminal control to shell");
+            }
+        }
+
+        CURRENT_FOREGROUND_PID.store(-1, Ordering::SeqCst);
+        signal_handler.clear_foreground_process().await;
+
         Ok(ExitCode::from(status.code().unwrap_or(0) as u8))
     }
 

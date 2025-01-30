@@ -94,10 +94,23 @@ impl JobManager {
         Ok(ExitCode::SUCCESS)
     }
 
-    pub fn suspend_job(&mut self, pid: id_t) {
+    pub fn suspend_job(&mut self, pid: id_t, command: &String, args: &Vec<String>) {
+        let job_id = self.job_counter.fetch_add(1, Ordering::SeqCst);
+
+        self.jobs.insert(
+            pid,
+            Job {
+                id: job_id,
+                pid,
+                args: args.to_owned(),
+                command: command.to_owned(),
+                status: JobStatus::Running,
+            },
+        );
+
         if let Some(job) = self.jobs.get_mut(&pid) {
             job.status = JobStatus::Suspended;
-            println!("[{}] tish: suspended {} {}", job.id, job.command, job.args.join(" "));
+            println!("\n[{}] tish: suspended {} {}", job.id, job.command, job.args.join(" "));
         }
     }
 
