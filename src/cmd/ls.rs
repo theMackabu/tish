@@ -151,31 +151,43 @@ fn calculate_column_widths(entries: &[Entry]) -> ColumnWidths {
 }
 
 fn print_standard_entries(entries: &[Entry]) -> std::io::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
     let terminal_width = match dimensions() {
         Some((w, _)) => w,
         None => 80,
     };
 
-    let mut current_line_width = 0;
-    let min_spacing = 2;
+    let max_name_len = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
+    let min_col_width = max_name_len + 3;
+    let num_columns = std::cmp::max(1, terminal_width / min_col_width);
+    let num_rows = (entries.len() + num_columns - 1) / num_columns;
 
-    for (i, entry) in entries.iter().enumerate() {
-        let display_length = entry.name.len() + 2;
-
-        if current_line_width + display_length >= terminal_width {
-            println!();
-            current_line_width = 0;
-        }
-
-        print!("{}{} \x1b[0m{}", entry.color, entry.icon, entry.name);
-
-        if i < entries.len() - 1 {
-            print!("  ");
-            current_line_width += display_length + min_spacing;
+    let mut column_widths = vec![0; num_columns];
+    for (idx, entry) in entries.iter().enumerate() {
+        let col = idx / num_rows;
+        if col < num_columns {
+            column_widths[col] = std::cmp::max(column_widths[col], entry.name.len() + 3);
         }
     }
 
-    if !entries.is_empty() {
+    for row in 0..num_rows {
+        for col in 0..num_columns {
+            let idx = col * num_rows + row;
+            if idx >= entries.len() {
+                break;
+            }
+
+            let entry = &entries[idx];
+            print!("{}{} \x1b[0m{}", entry.color, entry.icon, entry.name);
+
+            if col < num_columns - 1 && idx < entries.len() {
+                let spaces = column_widths[col].saturating_sub(entry.name.len() + 3);
+                print!("{}", " ".repeat(spaces + 3));
+            }
+        }
         println!();
     }
 

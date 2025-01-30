@@ -52,12 +52,17 @@ lazy_lock! {
         m.insert("git", Icon::new("\u{e702}", (229, 77, 58)));
         m.insert("vim", Icon::new("\u{e62b}", (67, 160, 71)));
         m.insert("dir", Icon::new("\u{f74a}", (224, 177, 77)));
+        m.insert("dev", Icon::new("\u{f19fc}", (255, 129, 241)));
+        m.insert("public", Icon::new("\u{f178a}", (224, 177, 77)));
         m.insert("diropen", Icon::new("\u{fc6e}", (224, 177, 77)));
-        m.insert("hiddendir", Icon::new("\u{f755}", (224, 177, 77)));
-        m.insert("downloads", Icon::new("\u{f74c}", (76, 175, 80)));
-        m.insert("pictures", Icon::new("\u{f74e}", (43, 150, 137)));
-        m.insert("music", Icon::new("\u{fb75}", (239, 83, 80)));
-        m.insert("videos", Icon::new("\u{f72a}", (253, 154, 62)));
+        m.insert("hiddendir", Icon::new("\u{f179e}", (224, 177, 77)));
+        m.insert("documents", Icon::new("\u{f0c82}", (86, 176, 240)));
+        m.insert("downloads", Icon::new("\u{f024d}", (40, 200, 37)));
+        m.insert("pictures", Icon::new("\u{f024f}", (43, 168, 168)));
+        m.insert("music", Icon::new("\u{f1359}", (239, 83, 80)));
+        m.insert("videos", Icon::new("\u{f0fce}", (253, 154, 62)));
+        m.insert("audio", Icon::new("\u{f075a}", (239, 83, 80)));
+        m.insert("video", Icon::new("\u{f1c8}", (253, 154, 62)));
         m.insert("config", Icon::new("\u{e5fc}", (32, 173, 194)));
         m.insert("file", Icon::new("\u{f0214}", (65, 129, 190)));
         m.insert("link", Icon::new("\u{f0337}", (255, 179, 222)));
@@ -206,8 +211,9 @@ lazy_lock! {
         m.insert("dir-code", Icon::new("\u{f19f6}", (224, 177, 77)));
         m.insert("dir-upload", Icon::new("\u{f758}", (250, 111, 66)));
         m.insert("dir-download", Icon::new("\u{f74c}", (76, 175, 80)));
-        m.insert("dir-secure", Icon::new("\u{f74f}", (249, 169, 60)));
-        m.insert("dir-environment", Icon::new("\u{f74e}", (102, 187, 106)));
+        m.insert("dir-secure", Icon::new("\u{f0250}", (128, 128, 128)));
+        m.insert("dir-desktop", Icon::new("\u{f0770}", (194, 255, 236)));
+        m.insert("dir-apps", Icon::new("\u{f069d}", (23, 167, 241)));
         return m;
     };
 
@@ -225,14 +231,23 @@ lazy_lock! {
         m.insert("lib", "dir-code");
         m.insert("include", "dir-include");
         m.insert("download", "dir-download");
+        m.insert("applications", "dir-apps");
+        m.insert("apps", "dir-apps");
         m.insert("upload", "dir-upload");
         m.insert("downloads", "downloads");
+        m.insert("desktop", "dir-desktop");
+        m.insert("documents", "documents");
         m.insert("pictures", "pictures");
+        m.insert("dev", "dev");
+        m.insert("developer", "dev");
         m.insert("picture", "pictures");
+        m.insert("library", "dir-secure");
         m.insert("images", "pictures");
         m.insert("image", "pictures");
+        m.insert("public", "public");
         m.insert("music", "music");
         m.insert("videos", "videos");
+        m.insert("movies", "videos");
         return m;
     };
 
