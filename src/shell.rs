@@ -29,6 +29,8 @@ pub struct TishShell {
     pub lua: LuaState,
     pub home: Option<PathBuf>,
     pub signal_handler: SignalHandler,
+
+    readline: AsyncLineReader,
 }
 
 impl TishShell {
@@ -51,6 +53,7 @@ impl TishShell {
             args: args.to_owned(),
             lua: LuaState::new()?,
             home: dirs::home_dir(),
+            readline: AsyncLineReader::new()?,
             signal_handler: SignalHandler::new(),
         };
 
@@ -174,8 +177,6 @@ impl TishShell {
 
     pub async fn run(&mut self) -> Result<ExitCode> {
         let mut status = ExitCode::SUCCESS;
-        let mut rl = AsyncLineReader::new()?;
-        let mut sigint = signal(SignalKind::interrupt())?;
 
         if let Some(line) = self.args.command.to_owned() {
             if let Err(_) = self.lua.eval(&line) {
@@ -192,7 +193,7 @@ impl TishShell {
             let prompt = self.format_prompt();
 
             tokio::select! {
-                readline = rl.async_readline(&prompt) => {
+                readline = self.readline.async_readline(&prompt) => {
                     match readline {
                         Ok(line) => {
                             if let Err(_) = self.lua.eval(&line) {
@@ -200,17 +201,13 @@ impl TishShell {
                             }
                         }
                         Err(ReadlineError::Interrupted) => {
-                            rl.clear_buffer();
+                            self.readline.clear_buffer();
                             continue;
                         },
                         Err(ReadlineError::Eof) => break,
                         Err(_) => break,
                     }
                 }
-                _ = sigint.recv() => {
-                    rl.clear_buffer();
-                    continue;
-                },
             }
         }
 
