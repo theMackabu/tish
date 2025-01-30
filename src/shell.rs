@@ -22,7 +22,6 @@ use anyhow::Result;
 use chrono::{DateTime, Local};
 use rustyline::error::ReadlineError;
 use signals::SignalHandler;
-use tokio::signal::unix::{signal, SignalKind};
 
 pub struct TishShell {
     pub args: TishArgs,

@@ -245,7 +245,7 @@ impl Highlighter for TishHelper {
 
     fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
         let current_line = self.current_line.read();
-        if current_line.contains(' ') {
+        if current_line.ends_with(' ') {
             std::borrow::Cow::Owned(format!("\x1b[90m {hint}\x1b[0m"))
         } else {
             std::borrow::Cow::Owned(format!("\x1b[90m{hint}\x1b[0m"))
