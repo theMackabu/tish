@@ -62,7 +62,8 @@ impl TishCommand {
 
         if self.program.as_str() == "tish" && self.args.len() != 0 {
             let result = match internal_command {
-                InternalCommand::Jobs => crate::JOBS.lock().expect("Able to lock jobs").list_jobs()?,
+                InternalCommand::Fg => self.handle_builtin_fg().await?,
+                InternalCommand::Jobs => crate::JOBS.lock().expect("Able to lock jobs").list_jobs().await?,
                 InternalCommand::Help => Self::handle_builtin_help()?,
                 InternalCommand::Kill => self.handle_builtin_kill().await?,
                 InternalCommand::External => self.execute_external(shell).await?,
@@ -81,9 +82,11 @@ impl TishCommand {
                 true => cmd::ls::run(&self.args)?,
                 false => self.execute_external(shell).await?,
             },
+            Command::Fg => self.handle_builtin_fg().await?,
             Command::Cd => self.handle_builtin_cd()?,
             Command::Help => Self::handle_builtin_help()?,
             Command::Exit => std::process::exit(0),
+            Command::Jobs => crate::JOBS.lock().expect("Able to lock jobs").list_jobs().await?,
             Command::External => self.execute_external(shell).await?,
             Command::Script => shell.lua.eval_file(std::path::Path::new(&self.program))?,
             Command::Source => shell.lua.eval_file(Path::new(&self.args.get(0).ok_or_else(|| anyhow!("Could not determine source file"))?))?,
@@ -135,9 +138,13 @@ impl TishCommand {
             let mut handle = tokio::process::Command::new(&program);
             handle.args(&args);
 
-            if let Ok(mut jobs) = crate::JOBS.try_lock() {
-                if let Err(err) = jobs.add_job(&mut handle) {
+            if let Ok(mut manager) = crate::JOBS.try_lock() {
+                if let Err(err) = manager.add_job(&mut handle, program.clone(), args) {
                     eprintln!("Failed to add background job: {err}");
+                } else {
+                    if let Some(job) = manager.jobs.values().last() {
+                        println!("[{}] {}", job.id, job.pid);
+                    }
                 }
             } else {
                 eprintln!("Failed to acquire jobs lock for background process");
@@ -193,6 +200,34 @@ impl TishCommand {
             env!("CARGO_PKG_VERSION")
         );
         Ok(ExitCode::SUCCESS)
+    }
+
+    async fn handle_builtin_fg(&self) -> Result<ExitCode> {
+        let job_id = self.args.get(1).and_then(|s| s.parse::<usize>().ok());
+
+        let pid = match crate::JOBS.try_lock() {
+            Ok(mut jobs) => jobs.resume_job(job_id),
+            Err(_) => return Err(anyhow!("fg: unable to acquire jobs lock")),
+        };
+
+        match pid {
+            Some(pid) => {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGCONT);
+                    libc::tcsetpgrp(0, pid as i32);
+                }
+
+                let status = tokio::process::Command::new("wait").arg(pid.to_string()).status().await?;
+
+                unsafe {
+                    let shell_pgid = libc::getpgrp();
+                    libc::tcsetpgrp(0, shell_pgid);
+                }
+
+                Ok(ExitCode::from(status.code().unwrap_or(0) as u8))
+            }
+            None => Err(anyhow!("no current job")),
+        }
     }
 
     async fn handle_builtin_kill(&self) -> Result<ExitCode> {

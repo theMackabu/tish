@@ -32,8 +32,6 @@ impl SignalHandler {
         handler
     }
 
-    pub fn get_foreground_info(&self) -> Option<(String, Vec<String>)> { self.foreground_info.lock().ok()?.clone() }
-
     pub async fn set_foreground_process(&self, child: &Child, program: &str, args: &[String]) {
         let mut pid_guard = self.foreground_pid.lock().await;
         *pid_guard = child.id();
@@ -63,6 +61,16 @@ extern "C" fn handle_tstp(_: libc::c_int) {
 
             let shell_pgid = libc::getpgrp();
             libc::tcsetpgrp(0, shell_pgid);
+
+            if let Some(handler) = GLOBAL_SIGNAL_HANDLER.get() {
+                if let Ok(info) = handler.foreground_info.lock() {
+                    if let Some((_, _)) = info.as_ref() {
+                        if let Ok(mut jobs) = crate::JOBS.try_lock() {
+                            jobs.suspend_job(pid_val as u32);
+                        }
+                    }
+                }
+            }
         }
     }
 }

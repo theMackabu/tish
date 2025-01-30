@@ -1,7 +1,9 @@
 #[derive(Debug)]
 pub enum Command {
+    Fg,
     Cd,
     Ls,
+    Jobs,
     Help,
     Exit,
     Source,
@@ -11,6 +13,7 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum InternalCommand {
+    Fg,
     Pid,
     Jobs,
     Kill,
@@ -22,9 +25,11 @@ pub enum InternalCommand {
 impl Command {
     pub fn from_str(cmd: &str, args: &[String]) -> Command {
         match cmd {
+            "fg" => Command::Fg,
             "cd" => Command::Cd,
             "ls" => Command::Ls,
             "exit" => Command::Exit,
+            "jobs" => Command::Jobs,
             "source" => Command::Source,
             "help" | "?" => Command::Help,
             "tish" if !args.is_empty() => {
@@ -43,6 +48,7 @@ impl Command {
 impl InternalCommand {
     pub fn from_str(cmd: &str, args: &[String]) -> InternalCommand {
         match cmd {
+            "fg" => InternalCommand::Fg,
             "pid" => InternalCommand::Pid,
             "kill" => InternalCommand::Kill,
             "jobs" => InternalCommand::Jobs,
