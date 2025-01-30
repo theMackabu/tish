@@ -151,7 +151,7 @@ impl TishCommand {
         let command = self.resolve_command();
         let mut child = tokio::process::Command::new(&command[0].program).args(&command[0].args).args(&self.args).spawn()?;
 
-        signal_handler.set_foreground_process(&child).await;
+        signal_handler.set_foreground_process(&child, &self.program, &self.args).await;
         if let Some(pid) = child.id() {
             SignalHandler::update_foreground_pid(Some(pid));
         }
@@ -159,7 +159,9 @@ impl TishCommand {
         unsafe {
             let shell_pgid = libc::getpgrp();
             if let Some(child_pid) = child.id() {
+                libc::setpgid(child_pid as i32, child_pid as i32);
                 libc::tcsetpgrp(0, child_pid as i32);
+
                 let status = child.wait().await?;
                 libc::tcsetpgrp(0, shell_pgid);
 
