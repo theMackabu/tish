@@ -1,4 +1,5 @@
 pub mod highlight;
+pub mod signals;
 pub mod tokenizer;
 
 use crate::{
@@ -20,12 +21,14 @@ use std::{
 use anyhow::Result;
 use chrono::{DateTime, Local};
 use rustyline::error::ReadlineError;
+use signals::SignalHandler;
 use tokio::signal::unix::{signal, SignalKind};
 
 pub struct TishShell {
     pub args: TishArgs,
     pub lua: LuaState,
-    home: Option<PathBuf>,
+    pub home: Option<PathBuf>,
+    pub signal_handler: SignalHandler,
 }
 
 impl TishShell {
@@ -34,6 +37,7 @@ impl TishShell {
             args: args.to_owned(),
             lua: LuaState::new()?,
             home: dirs::home_dir(),
+            signal_handler: SignalHandler::new(),
         };
 
         if !args.no_env {

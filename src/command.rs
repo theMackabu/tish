@@ -4,8 +4,7 @@ use crate::{
     cmd,
     models::{Command, InternalCommand},
     os::env::EnvManager,
-    shell::tokenizer::Tokenizer,
-    shell::TishShell,
+    shell::{signals::SignalHandler, tokenizer::Tokenizer, TishShell},
 };
 
 use anyhow::{anyhow, Result};
@@ -124,7 +123,7 @@ impl TishCommand {
             self.spawn_background_job()?;
             Ok(ExitCode::SUCCESS)
         } else {
-            self.spawn_foreground_job().await
+            self.spawn_foreground_job(&shell.signal_handler).await
         }
     }
 
@@ -148,20 +147,31 @@ impl TishCommand {
         Ok(())
     }
 
-    async fn spawn_foreground_job(&self) -> Result<ExitCode> {
+    async fn spawn_foreground_job(&self, signal_handler: &SignalHandler) -> Result<ExitCode> {
         let command = self.resolve_command();
-        let mut handles = Vec::new();
+        let mut child = tokio::process::Command::new(&command[0].program).args(&command[0].args).args(&self.args).spawn()?;
 
-        for cmd in &command {
-            let child = tokio::process::Command::new(&cmd.program).args(&cmd.args).args(&self.args).spawn()?;
-            handles.push(child);
+        signal_handler.set_foreground_process(&child).await;
+        if let Some(pid) = child.id() {
+            SignalHandler::update_foreground_pid(Some(pid));
         }
 
-        for mut child in handles {
-            child.wait().await?;
+        unsafe {
+            let shell_pgid = libc::getpgrp();
+            if let Some(child_pid) = child.id() {
+                libc::tcsetpgrp(0, child_pid as i32);
+                let status = child.wait().await?;
+                libc::tcsetpgrp(0, shell_pgid);
+
+                signal_handler.clear_foreground_process().await;
+                SignalHandler::update_foreground_pid(None);
+
+                return Ok(ExitCode::from(status.code().unwrap_or(0) as u8));
+            }
         }
 
-        return Ok(ExitCode::SUCCESS);
+        let status = child.wait().await?;
+        Ok(ExitCode::from(status.code().unwrap_or(0) as u8))
     }
 
     fn handle_builtin_help() -> Result<ExitCode> {
