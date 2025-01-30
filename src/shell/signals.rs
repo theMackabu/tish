@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use tokio::{process::Child, sync::Mutex};
 
@@ -12,7 +12,6 @@ static GLOBAL_SIGNAL_HANDLER: OnceLock<Arc<SignalHandler>> = OnceLock::new();
 pub struct SignalHandler {
     foreground_pid: Arc<Mutex<Option<u32>>>,
     foreground_info: Arc<StdMutex<Option<(String, Vec<String>)>>>,
-    is_suspended: Arc<AtomicBool>,
 }
 
 impl SignalHandler {
@@ -20,7 +19,6 @@ impl SignalHandler {
         let handler = Self {
             foreground_pid: Arc::new(Mutex::new(None)),
             foreground_info: Arc::new(StdMutex::new(None)),
-            is_suspended: Arc::new(AtomicBool::new(false)),
         };
 
         let arc_handler = Arc::new(handler.clone());
@@ -34,6 +32,8 @@ impl SignalHandler {
         handler
     }
 
+    pub fn get_foreground_info(&self) -> Option<(String, Vec<String>)> { self.foreground_info.lock().ok()?.clone() }
+
     pub async fn set_foreground_process(&self, child: &Child, program: &str, args: &[String]) {
         let mut pid_guard = self.foreground_pid.lock().await;
         *pid_guard = child.id();
@@ -41,7 +41,6 @@ impl SignalHandler {
         if let Ok(mut info_guard) = self.foreground_info.lock() {
             *info_guard = Some((program.to_string(), args.to_vec()));
         }
-        self.is_suspended.store(false, Ordering::SeqCst);
     }
 
     pub async fn clear_foreground_process(&self) {
@@ -51,7 +50,6 @@ impl SignalHandler {
         if let Ok(mut info_guard) = self.foreground_info.lock() {
             *info_guard = None;
         }
-        self.is_suspended.store(false, Ordering::SeqCst);
     }
 
     pub fn update_foreground_pid(pid: Option<u32>) { CURRENT_FOREGROUND_PID.store(pid.unwrap_or(0) as usize, Ordering::SeqCst); }
@@ -65,15 +63,6 @@ extern "C" fn handle_tstp(_: libc::c_int) {
 
             let shell_pgid = libc::getpgrp();
             libc::tcsetpgrp(0, shell_pgid);
-
-            if let Some(handler) = GLOBAL_SIGNAL_HANDLER.get() {
-                if let Ok(info_guard) = handler.foreground_info.lock() {
-                    if let Some((program, args)) = info_guard.as_ref() {
-                        let args_str = args.join(" ");
-                        println!("\ntish: suspended {} {}", program, args_str);
-                    }
-                }
-            }
         }
     }
 }
