@@ -2,7 +2,6 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::process::Command;
 
-#[derive(Debug)]
 enum TemplateToken {
     Space(usize),
     Text(String),
@@ -16,7 +15,8 @@ enum TemplateToken {
         condition: String,
         operator: String,
         comparison: String,
-        body: Vec<TemplateToken>,
+        if_body: Vec<TemplateToken>,
+        else_body: Option<Vec<TemplateToken>>,
     },
 }
 
@@ -101,16 +101,17 @@ impl<'c> Template<'c> {
     }
 
     fn execute_command(&self, cmd: &str) -> String {
-        let cmd = cmd.trim_matches('\'');
+        let cmd = cmd.trim_matches('\'').trim_start_matches("cmd(").trim_end_matches(")");
         let mut parts = cmd.split_whitespace();
+
         let program = match parts.next() {
             Some(p) => p,
             None => return String::new(),
         };
 
         match Command::new(program).args(parts).output() {
-            Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            _ => String::new(),
+            Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            Err(_) => String::new(),
         }
     }
 
@@ -136,7 +137,9 @@ impl<'c> Template<'c> {
             match token {
                 TemplateToken::Text(text) => result.push_str(text),
                 TemplateToken::Space(count) => result.push_str(&" ".repeat(*count)),
-                TemplateToken::Command(cmd) => result.push_str(&self.execute_command(cmd)),
+                TemplateToken::Command(cmd) => {
+                    result.push_str(&self.execute_command(cmd));
+                }
                 TemplateToken::Variable(name) => {
                     if let Some(value) = self.context.get(name.as_str()) {
                         result.push_str(value);
@@ -152,11 +155,16 @@ impl<'c> Template<'c> {
                     condition,
                     operator,
                     comparison,
-                    body,
+                    if_body,
+                    else_body,
                 } => {
                     let cmd_output = self.execute_command(condition);
-                    if self.evaluate_condition(&cmd_output, operator, comparison) {
-                        result.push_str(&self.render_tokens(body));
+                    let condition_met = self.evaluate_condition(&cmd_output, operator, comparison);
+
+                    if condition_met {
+                        result.push_str(&self.render_tokens(if_body));
+                    } else if let Some(else_tokens) = else_body {
+                        result.push_str(&self.render_tokens(else_tokens));
                     }
                 }
             }
@@ -291,39 +299,82 @@ impl<'c> Template<'c> {
     }
 
     fn parse_conditional(&self, content: &str) -> TemplateToken {
-        let parts: Vec<&str> = content.split('{').collect();
-        if parts.len() != 2 {
+        let condition_str = content.split('{').next().unwrap_or("").trim();
+
+        let (cmd, rest) = if let Some(cmd_start) = condition_str.find("cmd('") {
+            if let Some(cmd_end) = condition_str[cmd_start..].find("')") {
+                let cmd = &condition_str[cmd_start + 5..cmd_start + cmd_end];
+                let rest = &condition_str[cmd_start + cmd_end + 2..];
+                (cmd.to_string(), rest.trim())
+            } else {
+                return TemplateToken::Text(content.to_string());
+            }
+        } else {
+            return TemplateToken::Text(content.to_string());
+        };
+
+        let rest_parts: Vec<&str> = rest.split_whitespace().collect();
+        if rest_parts.len() != 2 {
             return TemplateToken::Text(content.to_string());
         }
 
-        let condition_str = parts[0].trim();
-        let operators = ["contains", "equals", "startswith", "endswith", "matches"];
+        let operator = rest_parts[0].to_string();
+        let comparison = rest_parts[1].trim_matches('\'').to_string();
+        let remaining = &content[condition_str.len()..];
+        let if_body_str = self.extract_block(remaining);
+        let if_body = self.parse_tokens(&if_body_str);
 
-        let mut condition = String::new();
-        let mut operator = String::new();
-        let mut comparison = String::new();
+        let else_body = if let Some(else_idx) = remaining[if_body_str.len()..].find("else") {
+            let else_content = &remaining[if_body_str.len() + else_idx + 4..];
+            if else_content.trim().starts_with('{') {
+                let else_str = self.extract_block(else_content);
+                Some(self.parse_tokens(&else_str))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
-        for op in operators {
-            if let Some(idx) = condition_str.find(&op) {
-                let (cond, rest) = condition_str.split_at(idx);
-                let (op_str, comp) = rest.split_at(op.len());
+        TemplateToken::Conditional {
+            condition: cmd,
+            operator,
+            comparison,
+            if_body,
+            else_body,
+        }
+    }
 
-                condition = cond.trim().trim_matches('\'').to_string();
-                operator = op_str.trim().to_string();
-                comparison = comp.trim().trim_matches('\'').to_string();
-                break;
+    fn extract_block(&self, content: &str) -> String {
+        let mut depth = 0;
+        let mut start_pos = 0;
+        let mut end_pos = 0;
+        let mut in_block = false;
+
+        for (i, c) in content.chars().enumerate() {
+            match c {
+                '{' => {
+                    if !in_block {
+                        in_block = true;
+                        start_pos = i + 1;
+                    }
+                    depth += 1;
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 && in_block {
+                        end_pos = i;
+                        break;
+                    }
+                }
+                _ => {}
             }
         }
 
-        if operator.is_empty() {
-            return TemplateToken::Text(content.to_string());
-        }
-
-        TemplateToken::Conditional {
-            condition,
-            operator,
-            comparison,
-            body: self.parse_tokens(parts[1].trim_end_matches('}')),
+        if in_block && end_pos > start_pos {
+            content[start_pos..end_pos].trim().to_string()
+        } else {
+            String::new()
         }
     }
 }
