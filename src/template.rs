@@ -87,10 +87,8 @@ impl<'c> Template<'c> {
     }
 
     fn parse_hex_color(color: &str) -> Option<String> {
-        if !color.starts_with('#') {
-            return None;
-        }
-        let hex = color.trim_start_matches('#');
+        let hex = if color.starts_with('#') { &color[1..] } else { color };
+
         if hex.len() != 6 {
             return None;
         }
@@ -224,7 +222,13 @@ impl<'c> Template<'c> {
                         nested.push(c);
                     }
                 }
-                _ if in_name => color.push(c),
+                _ if in_name => {
+                    if c == 'c' && chars.peek() == Some(&'.') {
+                        chars.next();
+                        continue;
+                    }
+                    color.push(c);
+                }
                 _ => nested.push(c),
             }
         }
