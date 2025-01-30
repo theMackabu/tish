@@ -1,3 +1,5 @@
+// TODO prefer built in commands over binaries
+
 use crate::shell::highlight;
 use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
@@ -17,7 +19,7 @@ use rustyline::{
     hint::Hinter,
     history::{FileHistory, History, SearchDirection},
     validate::{MatchingBracketValidator, Validator},
-    CompletionType, Config, Context, Editor, Helper,
+    ColorMode, CompletionType, Config, Context, Editor, Helper,
 };
 
 type Readline<T> = Editor<T, FileHistory>;
@@ -275,10 +277,10 @@ impl AsyncLineReader {
 
         let config = Config::builder()
             .auto_add_history(true)
+            .max_history_size(500)?
             .history_ignore_dups(true)?
-            .color_mode(rustyline::ColorMode::Enabled)
-            .completion_type(rustyline::CompletionType::Fuzzy)
-            .edit_mode(rustyline::EditMode::Emacs)
+            .color_mode(ColorMode::Enabled)
+            .completion_type(CompletionType::Fuzzy)
             .check_cursor_position(true)
             .build();
 

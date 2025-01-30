@@ -1,3 +1,5 @@
+// TODO: make lua functions work in the green/red highlighter
+
 use std::{
     collections::HashMap,
     env,
@@ -327,6 +329,9 @@ impl Highlighter {
 
                     if let Some(&(pos, next_c)) = chars.peek() {
                         match (c, next_c) {
+                            // FIXME
+                            // if ls && ls (green)
+                            // if anything_else && ls (its red)
                             ('&', '&') | ('|', '|') | ('>', '>') | ('<', '<') => {
                                 content.push(next_c);
                                 end = pos;
