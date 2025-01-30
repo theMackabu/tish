@@ -11,6 +11,10 @@ enum TemplateToken {
         color: String,
         content: Vec<TemplateToken>,
     },
+    FormatTag {
+        format_type: FormatType,
+        content: Vec<TemplateToken>,
+    },
     Conditional {
         condition: String,
         operator: String,
@@ -20,12 +24,22 @@ enum TemplateToken {
     },
 }
 
+#[derive(Clone, Copy)]
+enum FormatType {
+    Bold,
+    Italic,
+    Underline,
+}
+
 pub struct Template<'c> {
     template: String,
     context: HashMap<&'c str, String>,
 }
 
 const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_ITALIC: &str = "\x1b[3m";
+const ANSI_UNDERLINE: &str = "\x1b[4m";
 
 const ANSI_COLORS: &[(&str, &str)] = &[
     ("reset", ANSI_RESET),
@@ -86,6 +100,14 @@ impl<'c> Template<'c> {
         String::new()
     }
 
+    fn get_format_code(&self, format_type: FormatType) -> &'static str {
+        match format_type {
+            FormatType::Bold => ANSI_BOLD,
+            FormatType::Italic => ANSI_ITALIC,
+            FormatType::Underline => ANSI_UNDERLINE,
+        }
+    }
+
     fn parse_hex_color(color: &str) -> Option<String> {
         let hex = if color.starts_with('#') { &color[1..] } else { color };
 
@@ -131,7 +153,7 @@ impl<'c> Template<'c> {
 
     fn render_tokens(&self, tokens: &[TemplateToken]) -> String {
         let mut result = String::new();
-        let mut has_colors = false;
+        let mut has_formatting = false;
 
         for token in tokens {
             match token {
@@ -146,8 +168,14 @@ impl<'c> Template<'c> {
                     }
                 }
                 TemplateToken::ColorTag { color, content } => {
-                    has_colors = true;
+                    has_formatting = true;
                     result.push_str(&self.get_color_code(color));
+                    result.push_str(&self.render_tokens(content));
+                    result.push_str(ANSI_RESET);
+                }
+                TemplateToken::FormatTag { format_type, content } => {
+                    has_formatting = true;
+                    result.push_str(self.get_format_code(*format_type));
                     result.push_str(&self.render_tokens(content));
                     result.push_str(ANSI_RESET);
                 }
@@ -170,7 +198,7 @@ impl<'c> Template<'c> {
             }
         }
 
-        if has_colors && !result.ends_with(ANSI_RESET) {
+        if has_formatting && !result.ends_with(ANSI_RESET) {
             result.push_str(ANSI_RESET);
         }
 
@@ -189,7 +217,14 @@ impl<'c> Template<'c> {
                         tokens.push(TemplateToken::Text(current_text.clone()));
                         current_text.clear();
                     }
-                    tokens.push(self.parse_color_tag(&mut chars));
+
+                    if let Some(&next_char) = chars.peek() {
+                        if next_char == 'c' {
+                            tokens.push(self.parse_color_tag(&mut chars));
+                        } else {
+                            tokens.push(self.parse_format_tag(&mut chars));
+                        }
+                    }
                 }
                 '{' => {
                     if !current_text.is_empty() {
@@ -207,6 +242,46 @@ impl<'c> Template<'c> {
         }
 
         tokens
+    }
+
+    fn parse_format_tag(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> TemplateToken {
+        let mut tag_name = String::new();
+        let mut content = Vec::new();
+        let mut in_name = true;
+        let mut nested = String::new();
+
+        while let Some(c) = chars.next() {
+            match c {
+                '>' if in_name => in_name = false,
+                '<' if !in_name => {
+                    if chars.peek() == Some(&'/') {
+                        while let Some(c) = chars.next() {
+                            if c == '>' {
+                                break;
+                            }
+                        }
+                        break;
+                    } else {
+                        nested.push(c);
+                    }
+                }
+                _ if in_name => tag_name.push(c),
+                _ => nested.push(c),
+            }
+        }
+
+        let format_type = match tag_name.as_str() {
+            "b" => FormatType::Bold,
+            "i" => FormatType::Italic,
+            "u" => FormatType::Underline,
+            _ => return TemplateToken::Text(format!("<{}>", tag_name)),
+        };
+
+        if !nested.is_empty() {
+            content = self.parse_tokens(&nested);
+        }
+
+        TemplateToken::FormatTag { format_type, content }
     }
 
     fn parse_color_tag(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> TemplateToken {
