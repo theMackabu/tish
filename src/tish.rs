@@ -30,7 +30,7 @@ lazy_lock! {
 }
 
 pub mod prelude {
-    pub use super::{argument, config, dotfile, lazy_lock, register_functions, sys};
+    pub use super::{argument, config, define, dotfile, env_set_sync, lazy_lock};
     pub use anyhow::anyhow;
 }
 
@@ -40,9 +40,9 @@ async fn main() -> Result<ExitCode> {
     let mut shell = TishShell::new(args).await?;
 
     env_set_sync! {
-        0 = "tish",
-        LUA_VER = "5.4",
-        VERSION = env!("CARGO_PKG_VERSION")
+        "0" => "tish",
+        "LUA_VER" => "5.4",
+        "VERSION" => env!("CARGO_PKG_VERSION")
     };
 
     shell.run().await?;

@@ -52,16 +52,10 @@ pub unsafe fn struct_to_group(group: libc::group) -> Group {
 
 #[macro_export]
 macro_rules! env_set_sync {
-    ( $( $key:tt = $val:expr ),* $(,)? ) => {{
+    ( $( $key:expr => $val:expr ),* $(,)? ) => {{
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _g = LOCK.lock().unwrap();
 
-        $(
-            let key = match stringify!($key).parse::<u64>() {
-                Ok(_) => stringify!($key),
-                Err(_) => stringify!($key),
-            };
-            unsafe { std::env::set_var(key, $val); }
-        )*
+        $(unsafe { std::env::set_var($key, $val); })*
     }};
 }

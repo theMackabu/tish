@@ -87,7 +87,7 @@ impl TishCommand {
             Command::Script => shell.lua.eval_file(std::path::Path::new(&self.program))?,
             Command::Source => shell.lua.eval_file(Path::new(&self.args.get(0).ok_or_else(|| anyhow!("Could not determine source file"))?))?,
 
-            Command::Ls => match shell.lua.get_config().read().builtin_ls {
+            Command::Ls => match shell.lua.get_config_value("use_tish_ls")? {
                 true => cmd::ls::run(&self.args)?,
                 false => self.execute_external(shell).await?,
             },
@@ -115,8 +115,7 @@ impl TishCommand {
     }
 
     async fn execute_external(&self, shell: &TishShell) -> Result<ExitCode> {
-        let config = shell.lua.get_config();
-        let auto_cd = config.read().auto_cd;
+        let auto_cd = shell.lua.get_config_value("auto_cd")?;
 
         let path_str = if self.program.starts_with("~/") {
             dirs::home_dir()

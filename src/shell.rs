@@ -105,9 +105,8 @@ impl TishShell {
         }
     }
 
-    fn format_prompt(&self) -> String {
-        let config = self.lua.get_config();
-        let template_str = config.read().prompt.to_owned();
+    fn format_prompt(&self) -> Result<String> {
+        let template_str: String = self.lua.get_config_value("prompt")?;
         let mut template = Template::new(&template_str);
 
         fn determine_prompt_symbol() -> Result<String, Box<dyn std::error::Error>> {
@@ -143,7 +142,7 @@ impl TishShell {
             template.insert("prompt", symbol.to_string());
         }
 
-        return template.render();
+        Ok(template.render())
     }
 
     async fn execute_command(&mut self, line: &String) -> ExitCode {
@@ -158,8 +157,14 @@ impl TishShell {
                 Err(e) => e,
             };
 
+            if err.to_string().contains("__tish_exit") {
+                continue;
+            }
+
             let error_msg = match err.downcast_ref::<std::io::Error>() {
-                Some(io_err) if io_err.kind() == std::io::ErrorKind::NotFound => format!("tish: command not found: {}", cmd.program),
+                Some(io_err) if io_err.kind() == std::io::ErrorKind::NotFound => {
+                    format!("tish: command not found: {}", cmd.program)
+                }
                 Some(io_err) => format!("{}: {}", cmd.program, io_err),
                 _ => match err.downcast_ref::<String>() {
                     Some(str_err) => str_err.to_string(),
@@ -189,7 +194,7 @@ impl TishShell {
         }
 
         loop {
-            let prompt = self.format_prompt();
+            let prompt = self.format_prompt()?;
 
             tokio::select! {
                 readline = self.readline.async_readline(&prompt) => {
