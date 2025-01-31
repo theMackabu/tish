@@ -79,10 +79,11 @@ impl EnvManager {
             return "/".to_string();
         }
 
-        if let Ok(username) = user::get_username() {
-            if self.input == username {
-                return "~".to_string();
-            }
+        if matches!(
+            (user::get_username().ok(), path.components().last()),
+            (Some(username), Some(last_dir)) if *last_dir.as_os_str() == *username
+        ) {
+            return "~".to_string();
         }
 
         path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| self.input.clone())

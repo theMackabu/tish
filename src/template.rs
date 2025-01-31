@@ -15,13 +15,22 @@ enum TemplateToken {
         format_type: FormatType,
         content: Vec<TemplateToken>,
     },
+    VariableDeclaration {
+        name: String,
+        value: Box<TemplateToken>,
+    },
     Conditional {
-        condition: String,
+        condition: ConditionType,
         operator: String,
         comparison: String,
         if_body: Vec<TemplateToken>,
         else_body: Option<Vec<TemplateToken>>,
     },
+}
+
+enum ConditionType {
+    Command(String),
+    Variable(String),
 }
 
 #[derive(Clone, Copy)]
@@ -31,9 +40,42 @@ enum FormatType {
     Underline,
 }
 
+struct ScopedContext<'c> {
+    variables: HashMap<String, String>,
+    parent: Option<&'c ScopedContext<'c>>,
+}
+
+impl<'c> ScopedContext<'c> {
+    fn new() -> Self {
+        Self {
+            variables: HashMap::new(),
+            parent: None,
+        }
+    }
+
+    fn with_parent(parent: &'c ScopedContext<'c>) -> Self {
+        Self {
+            variables: HashMap::new(),
+            parent: Some(parent),
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<String> {
+        if let Some(value) = self.variables.get(key) {
+            Some(value.clone())
+        } else if let Some(parent) = self.parent {
+            parent.get(key)
+        } else {
+            None
+        }
+    }
+
+    fn set(&mut self, key: String, value: String) { self.variables.insert(key, value); }
+}
+
 pub struct Template<'c> {
     template: String,
-    context: HashMap<&'c str, String>,
+    global_context: ScopedContext<'c>,
 }
 
 const ANSI_RESET: &str = "\x1b[0m";
@@ -81,11 +123,11 @@ impl<'c> Template<'c> {
     pub fn new(template: &str) -> Self {
         Self {
             template: template.to_string(),
-            context: HashMap::new(),
+            global_context: ScopedContext::new(),
         }
     }
 
-    pub fn insert(&mut self, key: &'c str, value: String) { self.context.insert(key, value); }
+    pub fn insert(&mut self, key: &'c str, value: String) { self.global_context.set(key.to_string(), value); }
 
     fn get_color_code(&self, color: &str) -> String {
         if let Some(hex_code) = Self::parse_hex_color(color) {
@@ -148,35 +190,45 @@ impl<'c> Template<'c> {
             .replace("\x00", "\n");
 
         let tokens = self.parse_tokens(&normalized);
-        self.render_tokens(&tokens)
+        let mut context = ScopedContext::with_parent(&self.global_context);
+        self.render_tokens_with_context(&tokens, &mut context)
     }
 
-    fn render_tokens(&self, tokens: &[TemplateToken]) -> String {
+    fn render_tokens_with_context(&self, tokens: &[TemplateToken], context: &mut ScopedContext) -> String {
         let mut result = String::new();
         let mut has_formatting = false;
 
         for token in tokens {
             match token {
+                TemplateToken::VariableDeclaration { name, value } => {
+                    let value_str = match &**value {
+                        TemplateToken::Command(cmd) => self.execute_command(cmd),
+                        TemplateToken::Text(text) => text.clone(),
+                        TemplateToken::Variable(var_name) => context.get(var_name).unwrap_or_default(),
+                        _ => String::new(),
+                    };
+                    context.set(name.clone(), value_str);
+                }
                 TemplateToken::Text(text) => result.push_str(text),
                 TemplateToken::Space(count) => result.push_str(&" ".repeat(*count)),
                 TemplateToken::Command(cmd) => {
                     result.push_str(&self.execute_command(cmd));
                 }
                 TemplateToken::Variable(name) => {
-                    if let Some(value) = self.context.get(name.as_str()) {
-                        result.push_str(value);
+                    if let Some(value) = context.get(name) {
+                        result.push_str(&value);
                     }
                 }
                 TemplateToken::ColorTag { color, content } => {
                     has_formatting = true;
                     result.push_str(&self.get_color_code(color));
-                    result.push_str(&self.render_tokens(content));
+                    result.push_str(&self.render_tokens_with_context(content, context));
                     result.push_str(ANSI_RESET);
                 }
                 TemplateToken::FormatTag { format_type, content } => {
                     has_formatting = true;
                     result.push_str(self.get_format_code(*format_type));
-                    result.push_str(&self.render_tokens(content));
+                    result.push_str(&self.render_tokens_with_context(content, context));
                     result.push_str(ANSI_RESET);
                 }
                 TemplateToken::Conditional {
@@ -186,13 +238,11 @@ impl<'c> Template<'c> {
                     if_body,
                     else_body,
                 } => {
-                    let cmd_output = self.execute_command(condition);
-                    let condition_met = self.evaluate_condition(&cmd_output, operator, comparison);
-
-                    if condition_met {
-                        result.push_str(&self.render_tokens(if_body));
+                    let mut conditional_context = ScopedContext::with_parent(context);
+                    if self.evaluate_condition(condition, operator, comparison) {
+                        result.push_str(&self.render_tokens_with_context(if_body, &mut conditional_context));
                     } else if let Some(else_tokens) = else_body {
-                        result.push_str(&self.render_tokens(else_tokens));
+                        result.push_str(&self.render_tokens_with_context(else_tokens, &mut conditional_context));
                     }
                 }
             }
@@ -344,7 +394,9 @@ impl<'c> Template<'c> {
             }
         }
 
-        if content.starts_with("' '") {
+        if content.starts_with("var ") {
+            self.parse_variable_declaration(&content[4..])
+        } else if content.starts_with("' '") {
             let count = if content.len() > 3 { content[3..].trim().parse().unwrap_or(1) } else { 1 };
             TemplateToken::Space(count)
         } else if content.starts_with("if ") {
@@ -356,15 +408,46 @@ impl<'c> Template<'c> {
         }
     }
 
-    fn evaluate_condition(&self, cmd_output: &str, operator: &str, comparison: &str) -> bool {
+    fn parse_variable_declaration(&self, content: &str) -> TemplateToken {
+        let parts: Vec<&str> = content.splitn(2, '=').collect();
+        if parts.len() != 2 {
+            return TemplateToken::Text(format!("{{var {}}}", content));
+        }
+
+        let name = parts[0].trim().to_string();
+        let value = parts[1].trim();
+
+        let value_token = if value.starts_with("cmd('") {
+            TemplateToken::Command(value[4..].trim_matches('\'').trim_matches(')').to_string())
+        } else if value.starts_with('\'') && value.ends_with('\'') {
+            TemplateToken::Text(value[1..value.len() - 1].to_string())
+        } else {
+            TemplateToken::Variable(value.to_string())
+        };
+
+        TemplateToken::VariableDeclaration { name, value: Box::new(value_token) }
+    }
+
+    fn evaluate_condition(&self, condition: &ConditionType, operator: &str, comparison: &str) -> bool {
+        let value = match condition {
+            ConditionType::Command(cmd) => self.execute_command(cmd),
+            ConditionType::Variable(var_name) => {
+                if let Some(value) = self.global_context.get(var_name.as_str()) {
+                    value.clone()
+                } else {
+                    return false;
+                }
+            }
+        };
+
         match operator {
-            "equals" => cmd_output == comparison,
-            "contains" => cmd_output.contains(comparison),
-            "startswith" => cmd_output.starts_with(comparison),
-            "endswith" => cmd_output.ends_with(comparison),
+            "equals" => value == comparison,
+            "contains" => value.contains(comparison),
+            "startswith" => value.starts_with(comparison),
+            "endswith" => value.ends_with(comparison),
             "matches" => {
                 if let Ok(re) = Regex::new(comparison) {
-                    re.is_match(cmd_output)
+                    re.is_match(&value)
                 } else {
                     false
                 }
@@ -376,16 +459,24 @@ impl<'c> Template<'c> {
     fn parse_conditional(&self, content: &str) -> TemplateToken {
         let condition_str = content.split('{').next().unwrap_or("").trim();
 
-        let (cmd, rest) = if let Some(cmd_start) = condition_str.find("cmd('") {
+        let (condition, rest) = if let Some(cmd_start) = condition_str.find("cmd('") {
             if let Some(cmd_end) = condition_str[cmd_start..].find("')") {
                 let cmd = &condition_str[cmd_start + 5..cmd_start + cmd_end];
                 let rest = &condition_str[cmd_start + cmd_end + 2..];
-                (cmd.to_string(), rest.trim())
+                (ConditionType::Command(cmd.to_string()), rest.trim())
             } else {
                 return TemplateToken::Text(content.to_string());
             }
         } else {
-            return TemplateToken::Text(content.to_string());
+            let parts: Vec<&str> = condition_str.split_whitespace().collect();
+            if parts.is_empty() {
+                return TemplateToken::Text(content.to_string());
+            }
+
+            let var_name = parts[0].trim_matches('(').trim_matches(')').to_string();
+            let rest = condition_str.split_once(char::is_whitespace).map(|(_, r)| r.trim()).unwrap_or("");
+
+            (ConditionType::Variable(var_name), rest)
         };
 
         let rest_parts: Vec<&str> = rest.split_whitespace().collect();
@@ -412,7 +503,7 @@ impl<'c> Template<'c> {
         };
 
         TemplateToken::Conditional {
-            condition: cmd,
+            condition,
             operator,
             comparison,
             if_body,

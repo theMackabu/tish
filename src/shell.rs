@@ -123,6 +123,16 @@ impl TishShell {
         tmpl.insert("path-folder", envm.pretty_dir());
         tmpl.insert("path-short", envm.condensed_path());
 
+        tmpl.insert("in-git-repo", git2::Repository::discover(".").is_ok().to_string());
+
+        tmpl.insert(
+            "git-branch",
+            git2::Repository::discover(".")
+                .ok()
+                .and_then(|repo| repo.head().ok().and_then(|h| h.shorthand().map(ToString::to_string)))
+                .unwrap_or_default(),
+        );
+
         tmpl.insert(
             "prompt",
             match unsafe { libc::getuid() } {
