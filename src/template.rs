@@ -19,6 +19,10 @@ enum TemplateToken {
         name: String,
         value: Box<TemplateToken>,
     },
+    StringOperation {
+        source: Box<TemplateToken>,
+        operations: Vec<Operation>,
+    },
     Conditional {
         condition: ConditionType,
         operator: String,
@@ -38,6 +42,18 @@ enum FormatType {
     Bold,
     Italic,
     Underline,
+}
+
+enum StringOperationType {
+    Match,
+    Split,
+    Replace,
+}
+
+struct Operation {
+    operation_type: StringOperationType,
+    pattern: Option<String>,
+    group: Option<usize>,
 }
 
 struct ScopedContext<'c> {
@@ -205,6 +221,7 @@ impl<'c> Template<'c> {
                         TemplateToken::Command(cmd) => self.execute_command(cmd),
                         TemplateToken::Text(text) => text.clone(),
                         TemplateToken::Variable(var_name) => context.get(var_name).unwrap_or_default(),
+                        TemplateToken::StringOperation { .. } => self.render_string_operation(value, context),
                         _ => String::new(),
                     };
                     context.set(name.clone(), value_str);
@@ -230,6 +247,9 @@ impl<'c> Template<'c> {
                     result.push_str(self.get_format_code(*format_type));
                     result.push_str(&self.render_tokens_with_context(content, context));
                     result.push_str(ANSI_RESET);
+                }
+                TemplateToken::StringOperation { .. } => {
+                    result.push_str(&self.render_string_operation(token, context));
                 }
                 TemplateToken::Conditional {
                     condition,
@@ -394,7 +414,9 @@ impl<'c> Template<'c> {
             }
         }
 
-        if content.starts_with("var ") {
+        if content.contains('|') && (content.contains("split(") || content.contains("match(") || content.contains("replace(")) {
+            self.parse_chained_operations(&content)
+        } else if content.starts_with("var ") {
             self.parse_variable_declaration(&content[4..])
         } else if content.starts_with("' '") {
             let count = if content.len() > 3 { content[3..].trim().parse().unwrap_or(1) } else { 1 };
@@ -403,6 +425,8 @@ impl<'c> Template<'c> {
             self.parse_conditional(&content[3..])
         } else if content.starts_with("cmd('") {
             TemplateToken::Command(content[4..].trim_matches('\'').trim_matches(')').to_string())
+        } else if content.starts_with("match(") || content.starts_with("split(") || content.starts_with("replace(") {
+            self.parse_single_operation(&content)
         } else {
             TemplateToken::Variable(content)
         }
@@ -417,6 +441,15 @@ impl<'c> Template<'c> {
         let name = parts[0].trim().to_string();
         let value = parts[1].trim();
 
+        if value.contains('|') {
+            if let TemplateToken::StringOperation { source, operations } = self.parse_chained_operations(value) {
+                return TemplateToken::VariableDeclaration {
+                    name,
+                    value: Box::new(TemplateToken::StringOperation { source, operations }),
+                };
+            }
+        }
+
         let value_token = if value.starts_with("cmd('") {
             TemplateToken::Command(value[4..].trim_matches('\'').trim_matches(')').to_string())
         } else if value.starts_with('\'') && value.ends_with('\'') {
@@ -426,6 +459,120 @@ impl<'c> Template<'c> {
         };
 
         TemplateToken::VariableDeclaration { name, value: Box::new(value_token) }
+    }
+
+    fn parse_chained_operations(&self, content: &str) -> TemplateToken {
+        let parts: Vec<&str> = content.split('|').map(|s| s.trim()).collect();
+        if parts.is_empty() {
+            return TemplateToken::Text(content.to_string());
+        }
+
+        let source = if parts[0].starts_with("cmd('") {
+            Box::new(TemplateToken::Command(parts[0][5..parts[0].len() - 2].to_string()))
+        } else {
+            Box::new(TemplateToken::Variable(parts[0].trim().to_string()))
+        };
+
+        let mut operations = Vec::new();
+        for part in parts.iter().skip(1) {
+            if let Some(op) = self.parse_operation(part) {
+                operations.push(op);
+            }
+        }
+
+        TemplateToken::StringOperation { source, operations }
+    }
+
+    fn parse_operation(&self, op_str: &str) -> Option<Operation> {
+        let (op_type, args) = if op_str.starts_with("match(") {
+            (StringOperationType::Match, &op_str[6..op_str.len() - 1])
+        } else if op_str.starts_with("split(") {
+            (StringOperationType::Split, &op_str[6..op_str.len() - 1])
+        } else if op_str.starts_with("replace(") {
+            (StringOperationType::Replace, &op_str[8..op_str.len() - 1])
+        } else {
+            return None;
+        };
+
+        let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
+        let pattern = parts.get(0).map(|p| p.trim_matches('\'').trim_matches('"').to_string());
+        let group = parts.get(1).and_then(|g| g.trim().parse().ok());
+
+        Some(Operation {
+            operation_type: op_type,
+            pattern,
+            group,
+        })
+    }
+
+    fn parse_single_operation(&self, content: &str) -> TemplateToken {
+        if let Some(op) = self.parse_operation(content) {
+            TemplateToken::StringOperation {
+                source: Box::new(TemplateToken::Text(String::new())),
+                operations: vec![op],
+            }
+        } else {
+            TemplateToken::Text(content.to_string())
+        }
+    }
+
+    fn render_string_operation(&self, token: &TemplateToken, context: &mut ScopedContext) -> String {
+        if let TemplateToken::StringOperation { source, operations } = token {
+            let mut result = match &**source {
+                TemplateToken::Command(cmd) => self.execute_command(cmd),
+                TemplateToken::Variable(var) => context.get(var).unwrap_or_default(),
+                _ => String::new(),
+            };
+
+            for op in operations {
+                result = match op.operation_type {
+                    StringOperationType::Match => {
+                        if let Some(pattern) = &op.pattern {
+                            if let Ok(re) = Regex::new(pattern) {
+                                if let Some(captures) = re.captures(&result) {
+                                    if let Some(group_idx) = op.group {
+                                        captures.get(group_idx).map(|m| m.as_str().to_string()).unwrap_or_default()
+                                    } else {
+                                        captures.get(0).map(|m| m.as_str().to_string()).unwrap_or_default()
+                                    }
+                                } else {
+                                    String::new()
+                                }
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    }
+                    StringOperationType::Split => {
+                        if let Some(delimiter) = &op.pattern {
+                            if let Some(index) = op.group {
+                                result.split(delimiter).nth(index).map(|s| s.trim().to_string()).unwrap_or_default()
+                            } else {
+                                result.split(delimiter).next().map(|s| s.trim().to_string()).unwrap_or_default()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    }
+                    StringOperationType::Replace => {
+                        if let (Some(pattern), Some(replacement)) = (&op.pattern, &op.group) {
+                            if let Ok(re) = Regex::new(pattern) {
+                                re.replace_all(&result, replacement.to_string().as_str()).to_string()
+                            } else {
+                                result
+                            }
+                        } else {
+                            result
+                        }
+                    }
+                };
+            }
+            result
+        } else {
+            String::new()
+        }
     }
 
     fn evaluate_condition(&self, condition: &ConditionType, operator: &str, comparison: &str) -> bool {
