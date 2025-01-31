@@ -306,10 +306,6 @@ impl LuaState {
     }
 
     pub fn setup_runtime(&self) -> anyhow::Result<std::process::ExitCode> {
-        // TODO: make this use
-        // wrapper around "require" that then
-        // https://www.lua.org/pil/8.1.html
-        // local process = require("process")
         let globals = self.lua.globals();
         let tish = self.lua.create_table()?;
         let process = LuaProcess { pid: std::process::id() };

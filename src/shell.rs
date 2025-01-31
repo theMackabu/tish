@@ -107,42 +107,32 @@ impl TishShell {
 
     fn format_prompt(&self) -> Result<String> {
         let template_str: String = self.lua.get_config_value("prompt")?;
-        let mut template = Template::new(&template_str);
+        let mut tmpl = Template::new(&template_str);
 
-        fn determine_prompt_symbol() -> Result<String, Box<dyn std::error::Error>> {
-            let uid = unsafe { libc::getuid() };
-            if uid == 0 {
-                Ok("#".to_string())
-            } else {
-                Ok("%".to_string())
+        let host = hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
+        let path = env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+
+        let envm = EnvManager::new(&path);
+
+        tmpl.insert("host", host);
+        tmpl.insert("pid", process::id().to_string());
+        tmpl.insert("user", user::get_username().unwrap_or_default());
+
+        tmpl.insert("path", envm.get_self());
+        tmpl.insert("path-pretty", envm.contract_home());
+        tmpl.insert("path-folder", envm.pretty_dir());
+        tmpl.insert("path-short", envm.condensed_path());
+
+        tmpl.insert(
+            "prompt",
+            match unsafe { libc::getuid() } {
+                0 => "#",
+                _ => "%",
             }
-        }
+            .to_string(),
+        );
 
-        // TODO: Rewrite this function to be much cleaner
-        let pid = process::id().to_string();
-        let host = hostname::get().unwrap().to_string_lossy().to_string();
-        let path = env::current_dir().unwrap().to_string_lossy().to_string();
-        let current_dir = env::current_dir().unwrap().to_string_lossy().to_string();
-
-        let display_dir = if current_dir == "/" {
-            "/".to_string()
-        } else {
-            env::current_dir().unwrap().file_name().unwrap_or_default().to_string_lossy().to_string()
-        };
-
-        template.insert("pid", pid);
-        template.insert("user", user::get_username().unwrap_or_default());
-        template.insert("host", host);
-
-        // TODO: Improve ENVManager to be dynamic loaded, no need for new classes
-        template.insert("path", EnvManager::new(&display_dir).pretty_dir());
-        template.insert("cwd", EnvManager::new(&path).contract_home());
-
-        if let Ok(symbol) = determine_prompt_symbol() {
-            template.insert("prompt", symbol.to_string());
-        }
-
-        Ok(template.render())
+        Ok(tmpl.render())
     }
 
     async fn execute_command(&mut self, line: &String) -> ExitCode {

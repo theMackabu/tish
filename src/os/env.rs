@@ -9,6 +9,8 @@ pub struct EnvManager {
 impl EnvManager {
     pub fn new(input: &str) -> Self { Self { input: input.to_string(), pos: 0 } }
 
+    pub fn get_self(&self) -> String { self.input.clone() }
+
     pub fn expand(&mut self) -> String {
         let mut tokenizer = Tokenizer::new(&self.input);
         let mut result = String::new();
@@ -70,20 +72,24 @@ impl EnvManager {
         std::env::var(&var_name).unwrap_or_default()
     }
 
-    pub fn pretty_dir(&mut self) -> String {
-        let path = self.take_while(|c| !c.is_whitespace());
+    pub fn pretty_dir(&self) -> String {
+        let path = PathBuf::from(&self.input);
+
+        if self.input == "/" {
+            return "/".to_string();
+        }
 
         if let Ok(username) = user::get_username() {
-            if path == username {
+            if self.input == username {
                 return "~".to_string();
             }
         }
 
-        return path;
+        path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| self.input.clone())
     }
 
-    pub fn contract_home(&mut self) -> String {
-        let path = PathBuf::from(self.take_while(|c| !c.is_whitespace()));
+    pub fn contract_home(&self) -> String {
+        let path = PathBuf::from(&self.input);
 
         if let Ok(home) = std::env::var("HOME") {
             let home_path = PathBuf::from(&home);
@@ -97,6 +103,44 @@ impl EnvManager {
         }
 
         path.display().to_string()
+    }
+
+    pub fn condensed_path(&self) -> String {
+        let path = PathBuf::from(&self.input);
+
+        let (base, remaining_path) = if let Ok(home) = std::env::var("HOME") {
+            let home_path = PathBuf::from(&home);
+            if let Ok(stripped) = path.strip_prefix(&home_path) {
+                ("~".to_string(), stripped.to_path_buf())
+            } else {
+                (String::new(), path)
+            }
+        } else {
+            (String::new(), path)
+        };
+
+        let components: Vec<_> = remaining_path.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+        if components.is_empty() {
+            return base;
+        }
+
+        let mut result = base;
+        if !result.is_empty() {
+            result.push('/');
+        }
+
+        for (i, component) in components.iter().enumerate() {
+            if i == components.len() - 1 {
+                result.push_str(component);
+            } else {
+                if let Some(c) = component.chars().next() {
+                    result.push(c);
+                    result.push('/');
+                }
+            }
+        }
+
+        result
     }
 
     pub fn expand_home(&mut self) -> String {
