@@ -78,8 +78,8 @@ impl PendingUpdates {
     fn add(&mut self, name: String, value: String) { self.updates.push((name, value)); }
 
     fn apply(&self, context: &mut ScopedContext) {
-        for (name, value) in &self.updates {
-            context.set(name.clone(), value.clone());
+        for (name, value) in self.updates.to_owned() {
+            context.set(name, value);
         }
     }
 }
@@ -364,7 +364,11 @@ impl<'c> Template<'c> {
                     if let Ok(re) = Regex::new(pattern) {
                         if let Some(captures) = re.captures(input) {
                             if let Some(OperationParam::Index(group_idx)) = op.param {
-                                captures.get(group_idx).map(|m| m.as_str().to_string()).unwrap_or_default()
+                                if group_idx < captures.len() {
+                                    captures.get(group_idx).map(|m| m.as_str().to_string()).unwrap_or_default()
+                                } else {
+                                    String::new()
+                                }
                             } else {
                                 captures.get(0).map(|m| m.as_str().to_string()).unwrap_or_default()
                             }
@@ -520,43 +524,42 @@ impl<'c> Template<'c> {
             }
         }
 
-        if content.contains('|') && (content.contains("split(") || content.contains("match(") || content.contains("replace(")) {
+        if content.starts_with("var ") {
+            self.parse_variable_declaration(&content)
+        } else if content.contains('|') {
             self.parse_chained_operations(&content)
-        } else if content.starts_with("var ") {
-            self.parse_variable_declaration(&content[4..])
+        } else if content.starts_with("if ") {
+            self.parse_conditional(&content[3..])
         } else if content.starts_with("' '") {
             let count = if content.len() > 3 { content[3..].trim().parse().unwrap_or(1) } else { 1 };
             TemplateToken::Space(count)
-        } else if content.starts_with("if ") {
-            self.parse_conditional(&content[3..])
         } else if content.starts_with("cmd('") {
             TemplateToken::Command(content[4..].trim_matches('\'').trim_matches(')').to_string())
         } else if content.starts_with("match(") || content.starts_with("split(") || content.starts_with("replace(") {
             self.parse_single_operation(&content)
         } else {
-            TemplateToken::Variable(content)
+            TemplateToken::Variable(content.trim().to_string())
         }
     }
 
     fn parse_variable_declaration(&self, content: &str) -> TemplateToken {
-        let parts: Vec<&str> = content.splitn(2, '=').collect();
+        let content = content[4..].trim();
+        let parts: Vec<&str> = content.split('=').map(|s| s.trim()).collect();
+
         if parts.len() != 2 {
             return TemplateToken::Text(format!("{{var {}}}", content));
         }
 
-        let name = parts[0].trim().to_string();
-        let value = parts[1].trim();
+        let name = parts[0].to_string();
+        let value = parts[1];
 
-        if value.contains('|') {
+        let value_token = if value.contains('|') {
             if let TemplateToken::StringOperation { source, operations } = self.parse_chained_operations(value) {
-                return TemplateToken::VariableDeclaration {
-                    name,
-                    value: Box::new(TemplateToken::StringOperation { source, operations }),
-                };
+                TemplateToken::StringOperation { source, operations }
+            } else {
+                TemplateToken::Text(value.to_string())
             }
-        }
-
-        let value_token = if value.starts_with("cmd('") {
+        } else if value.starts_with("cmd('") {
             TemplateToken::Command(value[4..].trim_matches('\'').trim_matches(')').to_string())
         } else if value.starts_with('\'') && value.ends_with('\'') {
             TemplateToken::Text(value[1..value.len() - 1].to_string())
@@ -576,7 +579,7 @@ impl<'c> Template<'c> {
         let source = if parts[0].starts_with("cmd('") {
             Box::new(TemplateToken::Command(parts[0][5..parts[0].len() - 2].to_string()))
         } else {
-            Box::new(TemplateToken::Variable(parts[0].trim().to_string()))
+            Box::new(TemplateToken::Variable(parts[0].to_string()))
         };
 
         let mut operations = Vec::new();
@@ -600,7 +603,29 @@ impl<'c> Template<'c> {
             return None;
         };
 
-        let parts: Vec<&str> = args.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut in_quotes = false;
+
+        for c in args.chars() {
+            match c {
+                '\'' | '"' => {
+                    in_quotes = !in_quotes;
+                    current.push(c);
+                }
+                ',' if !in_quotes => {
+                    if !current.is_empty() {
+                        parts.push(current.trim().to_string());
+                        current = String::new();
+                    }
+                }
+                _ => current.push(c),
+            }
+        }
+        if !current.is_empty() {
+            parts.push(current.trim().to_string());
+        }
+
         let pattern = parts.get(0).map(|p| p.trim_matches('\'').trim_matches('"').to_string());
 
         let param = match op_type {
