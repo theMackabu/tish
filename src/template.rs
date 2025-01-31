@@ -1,29 +1,33 @@
 use regex::Regex;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::process::Command;
+use std::{cell::RefCell, collections::HashMap, env, process::Command};
 
 enum TemplateToken {
     Space(usize),
     Text(String),
     Variable(String),
     Command(String),
+    EnvironmentVariable(String),
+
     ColorTag {
         color: String,
         content: Vec<TemplateToken>,
     },
+
     FormatTag {
         format_type: FormatType,
         content: Vec<TemplateToken>,
     },
+
     VariableDeclaration {
         name: String,
         value: Box<TemplateToken>,
     },
+
     StringOperation {
         source: Box<TemplateToken>,
         operations: Vec<Operation>,
     },
+
     Conditional {
         condition: ConditionType,
         operator: String,
@@ -259,12 +263,14 @@ impl<'c> Template<'c> {
                     let value_str = match &**value {
                         TemplateToken::Command(cmd) => self.execute_command(cmd),
                         TemplateToken::Text(text) => text.clone(),
+                        TemplateToken::EnvironmentVariable(env_name) => env::var(env_name).unwrap_or_default(),
                         TemplateToken::Variable(var_name) => context.get(var_name).unwrap_or_default(),
                         TemplateToken::StringOperation { source, operations } => {
                             let mut result = match &**source {
                                 TemplateToken::Command(cmd) => self.execute_command(cmd),
                                 TemplateToken::Variable(var) => context.get(var).unwrap_or_default(),
                                 TemplateToken::Text(text) => text.clone(),
+                                TemplateToken::EnvironmentVariable(env_name) => env::var(env_name).unwrap_or_default(),
                                 _ => String::new(),
                             };
 
@@ -288,6 +294,9 @@ impl<'c> Template<'c> {
                     if let Some(value) = context.get(name) {
                         result.push_str(&value);
                     }
+                }
+                TemplateToken::EnvironmentVariable(name) => {
+                    result.push_str(&env::var(name).unwrap_or_default());
                 }
                 TemplateToken::ColorTag { color, content } => {
                     has_formatting = true;
@@ -522,6 +531,11 @@ impl<'c> Template<'c> {
                 }
                 _ => content.push(c),
             }
+        }
+
+        let trimmed = content.trim();
+        if trimmed.starts_with('$') {
+            return TemplateToken::EnvironmentVariable(trimmed[1..].to_string());
         }
 
         if content.starts_with("var ") {
