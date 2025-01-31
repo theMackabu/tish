@@ -106,12 +106,11 @@ impl TishShell {
     }
 
     fn format_prompt(&self) -> Result<String> {
-        let template_str: String = self.lua.get_config_value("prompt")?;
-        let mut tmpl = Template::new(&template_str);
-
+        let str: String = self.lua.get_config_value("prompt")?;
         let host = hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
         let path = env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
 
+        let tmpl = Template::new(&str);
         let envm = EnvManager::new(&path);
 
         tmpl.insert("host", host);

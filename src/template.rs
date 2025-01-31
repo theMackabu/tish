@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::process::Command;
 
@@ -37,6 +38,11 @@ enum ConditionType {
     Variable(String),
 }
 
+enum OperationParam {
+    Index(usize),
+    ReplaceStr(String),
+}
+
 #[derive(Clone, Copy)]
 enum FormatType {
     Bold,
@@ -44,6 +50,7 @@ enum FormatType {
     Underline,
 }
 
+#[derive(PartialEq)]
 enum StringOperationType {
     Match,
     Split,
@@ -53,12 +60,28 @@ enum StringOperationType {
 struct Operation {
     operation_type: StringOperationType,
     pattern: Option<String>,
-    group: Option<usize>,
+    param: Option<OperationParam>,
 }
 
 struct ScopedContext<'c> {
     variables: HashMap<String, String>,
     parent: Option<&'c ScopedContext<'c>>,
+}
+
+struct PendingUpdates {
+    updates: Vec<(String, String)>,
+}
+
+impl PendingUpdates {
+    fn new() -> Self { Self { updates: Vec::new() } }
+
+    fn add(&mut self, name: String, value: String) { self.updates.push((name, value)); }
+
+    fn apply(&self, context: &mut ScopedContext) {
+        for (name, value) in &self.updates {
+            context.set(name.clone(), value.clone());
+        }
+    }
 }
 
 impl<'c> ScopedContext<'c> {
@@ -91,7 +114,7 @@ impl<'c> ScopedContext<'c> {
 
 pub struct Template<'c> {
     template: String,
-    global_context: ScopedContext<'c>,
+    global_context: RefCell<ScopedContext<'c>>,
 }
 
 const ANSI_RESET: &str = "\x1b[0m";
@@ -139,11 +162,14 @@ impl<'c> Template<'c> {
     pub fn new(template: &str) -> Self {
         Self {
             template: template.to_string(),
-            global_context: ScopedContext::new(),
+            global_context: RefCell::new(ScopedContext::new()),
         }
     }
 
-    pub fn insert(&mut self, key: &'c str, value: String) { self.global_context.set(key.to_string(), value); }
+    pub fn insert(&self, key: &'c str, value: String) {
+        let mut ctx = self.global_context.borrow_mut();
+        ctx.set(key.to_string(), value);
+    }
 
     fn get_color_code(&self, color: &str) -> String {
         if let Some(hex_code) = Self::parse_hex_color(color) {
@@ -206,11 +232,24 @@ impl<'c> Template<'c> {
             .replace("\x00", "\n");
 
         let tokens = self.parse_tokens(&normalized);
-        let mut context = ScopedContext::with_parent(&self.global_context);
-        self.render_tokens_with_context(&tokens, &mut context)
+        let global_ref = self.global_context.borrow();
+        let mut context = ScopedContext::with_parent(&global_ref);
+        let mut pending_updates = PendingUpdates::new();
+
+        let result = self.render_tokens_with_context(&tokens, &mut context, &mut pending_updates);
+
+        // drop the immutable borrow before applying updates
+        drop(global_ref);
+
+        if !pending_updates.updates.is_empty() {
+            let mut global = self.global_context.borrow_mut();
+            pending_updates.apply(&mut global);
+        }
+
+        result
     }
 
-    fn render_tokens_with_context(&self, tokens: &[TemplateToken], context: &mut ScopedContext) -> String {
+    fn render_tokens_with_context(&self, tokens: &[TemplateToken], context: &mut ScopedContext, pending_updates: &mut PendingUpdates) -> String {
         let mut result = String::new();
         let mut has_formatting = false;
 
@@ -221,10 +260,24 @@ impl<'c> Template<'c> {
                         TemplateToken::Command(cmd) => self.execute_command(cmd),
                         TemplateToken::Text(text) => text.clone(),
                         TemplateToken::Variable(var_name) => context.get(var_name).unwrap_or_default(),
-                        TemplateToken::StringOperation { .. } => self.render_string_operation(value, context),
+                        TemplateToken::StringOperation { source, operations } => {
+                            let mut result = match &**source {
+                                TemplateToken::Command(cmd) => self.execute_command(cmd),
+                                TemplateToken::Variable(var) => context.get(var).unwrap_or_default(),
+                                TemplateToken::Text(text) => text.clone(),
+                                _ => String::new(),
+                            };
+
+                            for op in operations {
+                                result = self.apply_operation(&result, op);
+                            }
+                            result
+                        }
                         _ => String::new(),
                     };
-                    context.set(name.clone(), value_str);
+
+                    context.set(name.to_owned(), value_str.to_owned());
+                    pending_updates.add(name.to_owned(), value_str);
                 }
                 TemplateToken::Text(text) => result.push_str(text),
                 TemplateToken::Space(count) => result.push_str(&" ".repeat(*count)),
@@ -239,17 +292,27 @@ impl<'c> Template<'c> {
                 TemplateToken::ColorTag { color, content } => {
                     has_formatting = true;
                     result.push_str(&self.get_color_code(color));
-                    result.push_str(&self.render_tokens_with_context(content, context));
+                    result.push_str(&self.render_tokens_with_context(content, context, pending_updates));
                     result.push_str(ANSI_RESET);
                 }
                 TemplateToken::FormatTag { format_type, content } => {
                     has_formatting = true;
                     result.push_str(self.get_format_code(*format_type));
-                    result.push_str(&self.render_tokens_with_context(content, context));
+                    result.push_str(&self.render_tokens_with_context(content, context, pending_updates));
                     result.push_str(ANSI_RESET);
                 }
-                TemplateToken::StringOperation { .. } => {
-                    result.push_str(&self.render_string_operation(token, context));
+                TemplateToken::StringOperation { source, operations } => {
+                    let mut op_result = match &**source {
+                        TemplateToken::Command(cmd) => self.execute_command(cmd),
+                        TemplateToken::Variable(var) => context.get(var).unwrap_or_default(),
+                        TemplateToken::Text(text) => text.clone(),
+                        _ => String::new(),
+                    };
+
+                    for op in operations {
+                        op_result = self.apply_operation(&op_result, op);
+                    }
+                    result.push_str(&op_result);
                 }
                 TemplateToken::Conditional {
                     condition,
@@ -259,10 +322,10 @@ impl<'c> Template<'c> {
                     else_body,
                 } => {
                     let mut conditional_context = ScopedContext::with_parent(context);
-                    if self.evaluate_condition(condition, operator, comparison) {
-                        result.push_str(&self.render_tokens_with_context(if_body, &mut conditional_context));
+                    if self.evaluate_condition(condition, operator, comparison, context) {
+                        result.push_str(&self.render_tokens_with_context(if_body, &mut conditional_context, pending_updates));
                     } else if let Some(else_tokens) = else_body {
-                        result.push_str(&self.render_tokens_with_context(else_tokens, &mut conditional_context));
+                        result.push_str(&self.render_tokens_with_context(else_tokens, &mut conditional_context, pending_updates));
                     }
                 }
             }
@@ -273,6 +336,49 @@ impl<'c> Template<'c> {
         }
 
         result
+    }
+
+    fn apply_operation(&self, input: &str, op: &Operation) -> String {
+        match op.operation_type {
+            StringOperationType::Replace => {
+                if let (Some(pattern), Some(OperationParam::ReplaceStr(replacement))) = (&op.pattern, &op.param) {
+                    input.replace(pattern, replacement)
+                } else {
+                    input.to_string()
+                }
+            }
+            StringOperationType::Split => {
+                if let (Some(delimiter), Some(OperationParam::Index(index))) = (&op.pattern, &op.param) {
+                    let parts: Vec<&str> = input.split(delimiter).collect();
+                    if *index < parts.len() {
+                        parts[*index].trim().to_string()
+                    } else {
+                        input.to_string()
+                    }
+                } else {
+                    input.to_string()
+                }
+            }
+            StringOperationType::Match => {
+                if let Some(pattern) = &op.pattern {
+                    if let Ok(re) = Regex::new(pattern) {
+                        if let Some(captures) = re.captures(input) {
+                            if let Some(OperationParam::Index(group_idx)) = op.param {
+                                captures.get(group_idx).map(|m| m.as_str().to_string()).unwrap_or_default()
+                            } else {
+                                captures.get(0).map(|m| m.as_str().to_string()).unwrap_or_default()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        input.to_string()
+                    }
+                } else {
+                    input.to_string()
+                }
+            }
+        }
     }
 
     fn parse_tokens(&self, template: &str) -> Vec<TemplateToken> {
@@ -494,14 +600,18 @@ impl<'c> Template<'c> {
             return None;
         };
 
-        let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
+        let parts: Vec<&str> = args.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
         let pattern = parts.get(0).map(|p| p.trim_matches('\'').trim_matches('"').to_string());
-        let group = parts.get(1).and_then(|g| g.trim().parse().ok());
+
+        let param = match op_type {
+            StringOperationType::Replace => parts.get(1).map(|r| OperationParam::ReplaceStr(r.trim_matches('\'').trim_matches('"').to_string())),
+            _ => parts.get(1).and_then(|g| g.trim().parse().ok()).map(OperationParam::Index),
+        };
 
         Some(Operation {
             operation_type: op_type,
             pattern,
-            group,
+            param,
         })
     }
 
@@ -516,71 +626,12 @@ impl<'c> Template<'c> {
         }
     }
 
-    fn render_string_operation(&self, token: &TemplateToken, context: &mut ScopedContext) -> String {
-        if let TemplateToken::StringOperation { source, operations } = token {
-            let mut result = match &**source {
-                TemplateToken::Command(cmd) => self.execute_command(cmd),
-                TemplateToken::Variable(var) => context.get(var).unwrap_or_default(),
-                _ => String::new(),
-            };
-
-            for op in operations {
-                result = match op.operation_type {
-                    StringOperationType::Match => {
-                        if let Some(pattern) = &op.pattern {
-                            if let Ok(re) = Regex::new(pattern) {
-                                if let Some(captures) = re.captures(&result) {
-                                    if let Some(group_idx) = op.group {
-                                        captures.get(group_idx).map(|m| m.as_str().to_string()).unwrap_or_default()
-                                    } else {
-                                        captures.get(0).map(|m| m.as_str().to_string()).unwrap_or_default()
-                                    }
-                                } else {
-                                    String::new()
-                                }
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        }
-                    }
-                    StringOperationType::Split => {
-                        if let Some(delimiter) = &op.pattern {
-                            if let Some(index) = op.group {
-                                result.split(delimiter).nth(index).map(|s| s.trim().to_string()).unwrap_or_default()
-                            } else {
-                                result.split(delimiter).next().map(|s| s.trim().to_string()).unwrap_or_default()
-                            }
-                        } else {
-                            String::new()
-                        }
-                    }
-                    StringOperationType::Replace => {
-                        if let (Some(pattern), Some(replacement)) = (&op.pattern, &op.group) {
-                            if let Ok(re) = Regex::new(pattern) {
-                                re.replace_all(&result, replacement.to_string().as_str()).to_string()
-                            } else {
-                                result
-                            }
-                        } else {
-                            result
-                        }
-                    }
-                };
-            }
-            result
-        } else {
-            String::new()
-        }
-    }
-
-    fn evaluate_condition(&self, condition: &ConditionType, operator: &str, comparison: &str) -> bool {
+    fn evaluate_condition(&self, condition: &ConditionType, operator: &str, comparison: &str, context: &ScopedContext) -> bool {
         let value = match condition {
             ConditionType::Command(cmd) => self.execute_command(cmd),
             ConditionType::Variable(var_name) => {
-                if let Some(value) = self.global_context.get(var_name.as_str()) {
-                    value.clone()
+                if let Some(value) = context.get(var_name) {
+                    value
                 } else {
                     return false;
                 }
