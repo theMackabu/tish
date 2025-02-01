@@ -41,6 +41,7 @@ enum ConditionType {
     Command(String),
     Variable(String),
     EnvVariable(String),
+    Literal(String),
 }
 
 enum OperationParam {
@@ -671,12 +672,14 @@ impl<'c> Template<'c> {
             ConditionType::Command(cmd) => self.execute_command(cmd),
             ConditionType::Variable(name) => context.get(name).unwrap_or_default(),
             ConditionType::EnvVariable(name) => env::var(name).unwrap_or_default(),
+            ConditionType::Literal(val) => val.to_string(),
         };
 
         let comparison_value = if comparison.starts_with('$') {
             env::var(&comparison[1..]).unwrap_or_default()
         } else {
-            context.get(comparison).unwrap_or(comparison.to_string())
+            let unquoted = Self::strip_quotes(comparison);
+            context.get(unquoted).unwrap_or(unquoted.to_string())
         };
 
         match operator {
@@ -851,18 +854,21 @@ impl<'c> Template<'c> {
             ConditionType::Command(cmd)
         } else if clean_expr.starts_with('$') {
             ConditionType::EnvVariable(clean_expr[1..].to_string())
+        } else if (clean_expr.starts_with('\'') && clean_expr.ends_with('\'')) || (clean_expr.starts_with('"') && clean_expr.ends_with('"')) {
+            let literal = clean_expr[1..clean_expr.len() - 1].to_string();
+            ConditionType::Literal(literal)
+        } else if clean_expr.parse::<f64>().is_ok() {
+            ConditionType::Literal(clean_expr.to_string())
         } else {
             ConditionType::Variable(clean_expr.to_string())
         }
     }
 
-    fn parse_comparison_expression(&self, expr: &str) -> String {
-        if expr.starts_with('\'') && expr.ends_with('\'') {
-            expr[1..expr.len() - 1].to_string()
-        } else if expr.starts_with('$') {
-            expr[1..].to_string()
+    fn strip_quotes(s: &str) -> &str {
+        if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
+            &s[1..s.len() - 1]
         } else {
-            expr.trim_matches('(').trim_matches(')').trim().to_string()
+            s
         }
     }
 
