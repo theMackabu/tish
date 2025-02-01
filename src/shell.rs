@@ -125,9 +125,8 @@ impl TishShell {
         tmpl.insert("path-short", envm.condensed_path());
 
         if git_info.in_repo {
-            println!("{git_info:#?}");
-
             tmpl.insert("git.in-repo", true.to_string());
+            tmpl.insert("git.status", git_info.status());
             tmpl.insert("git.branch", git_info.branch_name);
             tmpl.insert("git.ahead", git_info.ahead);
             tmpl.insert("git.behind", git_info.behind);

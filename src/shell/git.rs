@@ -1,6 +1,5 @@
 use git2::{Repository, StatusOptions};
 
-#[derive(Debug)]
 pub struct GitStatusInfo {
     pub changed: bool,
     pub unmerged: String,
@@ -25,7 +24,6 @@ impl Default for GitStatusInfo {
     }
 }
 
-#[derive(Debug)]
 pub struct GitInfo {
     pub in_repo: bool,
     pub working: GitStatusInfo,
@@ -52,6 +50,30 @@ impl Default for GitInfo {
     }
 }
 
+impl GitInfo {
+    pub fn status(&self) -> String {
+        let mut status_parts = Vec::new();
+
+        if !self.branch_status.is_empty() {
+            status_parts.push(self.branch_status.clone());
+        }
+
+        if !self.staging.status_string.is_empty() {
+            status_parts.push(self.staging.status_string.trim().to_string());
+        }
+
+        if !self.working.status_string.is_empty() {
+            status_parts.push(self.working.status_string.trim().to_string());
+        }
+
+        if status_parts.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", status_parts.join(" "))
+        }
+    }
+}
+
 fn get_branch_name(repo: &Repository) -> String {
     if let Ok(head) = repo.head() {
         if head.is_branch() {
@@ -65,40 +87,35 @@ fn get_branch_name(repo: &Repository) -> String {
     "HEAD".to_string()
 }
 
-fn check_upstream_status(repo: &Repository, git_info: &mut GitInfo) -> i32 {
-    let (ahead, behind) = match repo.head().ok().and_then(|head| head.resolve().ok()).and_then(|branch| {
-        let branch_name = branch.name()?;
+fn check_upstream_status(repo: &Repository, git_info: &mut GitInfo) {
+    let (ahead, behind) = match (|| {
+        let head = repo.head().ok()?.resolve().ok()?;
+        let branch_name = head.name()?;
         let upstream = repo.branch_upstream_name(branch_name).ok()?;
-        let upstream_str = upstream.as_str()?;
-        let upstream_ref = repo.find_reference(upstream_str).ok()?;
+        let upstream_ref = repo.find_reference(upstream.as_str()?).ok()?;
 
-        match (branch.target(), upstream_ref.target()) {
-            (Some(local), Some(upstream)) => repo.graph_ahead_behind(local, upstream).ok(),
-            _ => None,
-        }
-    }) {
+        let local = head.target()?;
+        let upstream = upstream_ref.target()?;
+
+        repo.graph_ahead_behind(local, upstream).ok()
+    })() {
         Some((a, b)) => (a, b),
-        None => return 1,
+        None => return,
     };
 
     let ahead_str = if ahead > 0 { ahead.to_string() } else { String::new() };
     let behind_str = if behind > 0 { behind.to_string() } else { String::new() };
 
-    let branch_status = if ahead > 0 && behind > 0 {
-        "↕".to_string()
-    } else if ahead > 0 {
-        format!("↑{}", ahead)
-    } else if behind > 0 {
-        format!("↓{}", behind)
-    } else {
-        String::new()
+    let branch_status = match (ahead, behind) {
+        (0, 0) => String::new(),
+        (a, 0) => format!("↑{a}"),
+        (0, b) => format!("↓{b}"),
+        (_, _) => "↕".to_string(),
     };
 
     git_info.ahead = ahead_str;
     git_info.behind = behind_str;
     git_info.branch_status = branch_status;
-
-    return 0;
 }
 
 pub fn get_info() -> GitInfo {
@@ -189,7 +206,8 @@ pub fn get_info() -> GitInfo {
         if !working_status.deleted.is_empty() {
             working_parts.push(format!("-{}", working_status.deleted));
         }
-        working_status.status_string = working_parts.join(" ");
+
+        working_status.status_string = if !working_parts.is_empty() { format!(" {}", working_parts.join(" ")) } else { String::new() };
 
         let mut staging_parts = Vec::new();
         if !staging_status.added.is_empty() {
@@ -201,7 +219,8 @@ pub fn get_info() -> GitInfo {
         if !staging_status.deleted.is_empty() {
             staging_parts.push(format!("-{}", staging_status.deleted));
         }
-        staging_status.status_string = staging_parts.join(" ");
+
+        staging_status.status_string = if !staging_parts.is_empty() { format!(" {}", staging_parts.join(" ")) } else { String::new() };
     }
 
     git_info.working = working_status;
