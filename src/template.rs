@@ -1,6 +1,7 @@
 use regex::Regex;
 use std::{cell::RefCell, collections::HashMap, env, process::Command};
 
+#[derive(Debug)]
 enum TemplateToken {
     Space(usize),
     Text(String),
@@ -37,6 +38,7 @@ enum TemplateToken {
     },
 }
 
+#[derive(Debug)]
 enum ConditionType {
     Command(String),
     Variable(String),
@@ -47,25 +49,27 @@ enum ConditionType {
     And(Vec<ConditionType>),
 }
 
+#[derive(Debug)]
 enum OperationParam {
     Index(usize),
     ReplaceStr(String),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum FormatType {
     Bold,
     Italic,
     Underline,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum StringOperationType {
     Match,
     Split,
     Replace,
 }
 
+#[derive(Debug)]
 struct Operation {
     operation_type: StringOperationType,
     pattern: Option<String>,
@@ -240,12 +244,17 @@ impl<'c> Template<'c> {
             .join("")
             .replace("\x00", "\n");
 
+        println!("Normalized template: {:?}", normalized);
         let tokens = self.parse_tokens(&normalized);
+        println!("Parsed tokens: {:#?}", tokens);
+
         let global_ref = self.global_context.borrow();
         let mut context = ScopedContext::with_parent(&global_ref);
         let mut pending_updates = PendingUpdates::new();
 
         let result = self.render_tokens_with_context(&tokens, &mut context, &mut pending_updates);
+
+        println!("Render result: {}", result);
 
         // drop the immutable borrow before applying updates
         drop(global_ref);
