@@ -40,6 +40,7 @@ enum TemplateToken {
 enum ConditionType {
     Command(String),
     Variable(String),
+    EnvVariable(String),
 }
 
 enum OperationParam {
@@ -668,22 +669,47 @@ impl<'c> Template<'c> {
     fn evaluate_condition(&self, condition: &ConditionType, operator: &str, comparison: &str, context: &ScopedContext) -> bool {
         let value = match condition {
             ConditionType::Command(cmd) => self.execute_command(cmd),
-            ConditionType::Variable(var_name) => {
-                if let Some(value) = context.get(var_name) {
-                    value
-                } else {
-                    return false;
-                }
-            }
+            ConditionType::Variable(name) => context.get(name).unwrap_or_default(),
+            ConditionType::EnvVariable(name) => env::var(name).unwrap_or_default(),
+        };
+
+        let comparison_value = if comparison.starts_with('$') {
+            env::var(&comparison[1..]).unwrap_or_default()
+        } else {
+            context.get(comparison).unwrap_or(comparison.to_string())
         };
 
         match operator {
-            "equals" => value == comparison,
-            "contains" => value.contains(comparison),
-            "startswith" => value.starts_with(comparison),
-            "endswith" => value.ends_with(comparison),
+            "is_empty" => value.is_empty(),
+            "not_empty" => !value.is_empty(),
+
+            "equals" | "==" => value == comparison_value,
+            "not_equals" | "!=" => value != comparison_value,
+            "equals_ignore_case" | "ieq" => value.to_lowercase() == comparison_value.to_lowercase(),
+
+            "contains" | "includes" => value.contains(&comparison_value),
+            "not_contains" | "excludes" => !value.contains(&comparison_value),
+
+            "length_equals" => value.len() == comparison_value.parse().unwrap_or(0),
+            "length_greater" => value.len() > comparison_value.parse().unwrap_or(0),
+            "length_less" => value.len() < comparison_value.parse().unwrap_or(0),
+
+            "in" => comparison_value.split(',').map(str::trim).any(|x| x == value),
+            "not_in" => !comparison_value.split(',').map(str::trim).any(|x| x == value),
+
+            "is_number" => value.parse::<f64>().is_ok(),
+            "is_integer" => value.parse::<i64>().is_ok(),
+
+            "starts_with" => value.starts_with(&comparison_value),
+            "ends_with" => value.ends_with(&comparison_value),
+
+            "greater" | ">" => self.compare_values(&value, &comparison_value, |a, b| a > b),
+            "greater_equals" | ">=" => self.compare_values(&value, &comparison_value, |a, b| a >= b),
+            "less" | "<" => self.compare_values(&value, &comparison_value, |a, b| a < b),
+            "less_equals" | "<=" => self.compare_values(&value, &comparison_value, |a, b| a <= b),
+
             "matches" => {
-                if let Ok(re) = Regex::new(comparison) {
+                if let Ok(re) = Regex::new(&comparison_value) {
                     re.is_match(&value)
                 } else {
                     false
@@ -693,36 +719,59 @@ impl<'c> Template<'c> {
         }
     }
 
-    fn parse_conditional(&self, content: &str) -> TemplateToken {
-        let condition_str = content.split('{').next().unwrap_or("").trim();
+    fn compare_values<F>(&self, value: &str, comparison: &str, compare_fn: F) -> bool
+    where
+        F: Fn(&str, &str) -> bool + Copy,
+    {
+        let looks_like_version = |s: &str| s.split('.').all(|part| part.parse::<u32>().is_ok());
 
-        let (condition, rest) = if let Some(cmd_start) = condition_str.find("cmd('") {
-            if let Some(cmd_end) = condition_str[cmd_start..].find("')") {
-                let cmd = &condition_str[cmd_start + 5..cmd_start + cmd_end];
-                let rest = &condition_str[cmd_start + cmd_end + 2..];
-                (ConditionType::Command(cmd.to_string()), rest.trim())
-            } else {
-                return TemplateToken::Text(content.to_string());
-            }
-        } else {
-            let parts: Vec<&str> = condition_str.split_whitespace().collect();
-            if parts.is_empty() {
-                return TemplateToken::Text(content.to_string());
-            }
-
-            let var_name = parts[0].trim_matches('(').trim_matches(')').to_string();
-            let rest = condition_str.split_once(char::is_whitespace).map(|(_, r)| r.trim()).unwrap_or("");
-
-            (ConditionType::Variable(var_name), rest)
-        };
-
-        let rest_parts: Vec<&str> = rest.split_whitespace().collect();
-        if rest_parts.len() != 2 {
-            return TemplateToken::Text(content.to_string());
+        if let (Ok(v), Ok(c)) = (value.parse::<i64>(), comparison.parse::<i64>()) {
+            return compare_fn(&v.to_string(), &c.to_string());
         }
 
-        let operator = rest_parts[0].to_string();
-        let comparison = rest_parts[1].trim_matches('\'').to_string();
+        if let (Ok(v), Ok(c)) = (value.parse::<f64>(), comparison.parse::<f64>()) {
+            if v.is_nan() || c.is_nan() {
+                return false;
+            }
+            return compare_fn(&v.to_string(), &c.to_string());
+        }
+
+        if looks_like_version(value) && looks_like_version(comparison) {
+            return self.compare_versions(value, comparison, compare_fn);
+        }
+
+        compare_fn(value, comparison)
+    }
+
+    fn compare_versions<F>(&self, v1: &str, v2: &str, compare_fn: F) -> bool
+    where
+        F: Fn(&str, &str) -> bool,
+    {
+        let v1_parts: Vec<u32> = v1.split('.').filter_map(|x| x.parse().ok()).collect();
+        let v2_parts: Vec<u32> = v2.split('.').filter_map(|x| x.parse().ok()).collect();
+
+        let max_len = v1_parts.len().max(v2_parts.len());
+        let v1_normalized: String = v1_parts.iter().chain(std::iter::repeat(&0)).take(max_len).map(|n| format!("{:010}", n)).collect();
+        let v2_normalized: String = v2_parts.iter().chain(std::iter::repeat(&0)).take(max_len).map(|n| format!("{:010}", n)).collect();
+
+        compare_fn(&v1_normalized, &v2_normalized)
+    }
+
+    fn parse_conditional(&self, content: &str) -> TemplateToken {
+        let condition_str = content.split('{').next().unwrap_or("").trim();
+        let parts = self.split_conditional_parts(condition_str);
+
+        if parts.len() < 3 {
+            return TemplateToken::Text(format!("{{if {} }}", condition_str));
+        }
+
+        let left_expr = parts[0].trim();
+        let operator = parts[1].trim().to_string();
+        let right_expr = parts[2].trim();
+
+        let condition = self.parse_condition_expression(left_expr);
+        let comparison = right_expr.trim_matches('(').trim_matches(')').trim().to_string();
+
         let remaining = &content[condition_str.len()..];
         let if_body_str = self.extract_block(remaining);
         let if_body = self.parse_tokens(&if_body_str);
@@ -745,6 +794,75 @@ impl<'c> Template<'c> {
             comparison,
             if_body,
             else_body,
+        }
+    }
+
+    fn split_conditional_parts(&self, condition_str: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut paren_depth = 0;
+        let mut in_quotes = false;
+        let mut chars = condition_str.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            match c {
+                '\'' => {
+                    in_quotes = !in_quotes;
+                    current.push(c);
+                }
+                '(' if !in_quotes => {
+                    paren_depth += 1;
+                    if paren_depth == 1 {
+                        continue;
+                    }
+                    current.push(c);
+                }
+                ')' if !in_quotes => {
+                    paren_depth -= 1;
+                    if paren_depth == 0 {
+                        parts.push(current.trim().to_string());
+                        current = String::new();
+                        continue;
+                    }
+                    current.push(c);
+                }
+                ' ' if paren_depth == 0 && !in_quotes => {
+                    if !current.is_empty() {
+                        parts.push(current.trim().to_string());
+                        current = String::new();
+                    }
+                }
+                _ => current.push(c),
+            }
+        }
+
+        if !current.is_empty() {
+            parts.push(current.trim().to_string());
+        }
+
+        parts.into_iter().filter(|s| !s.is_empty()).map(|s| s.trim().to_string()).collect()
+    }
+
+    fn parse_condition_expression(&self, expr: &str) -> ConditionType {
+        let clean_expr = expr.trim_matches('(').trim_matches(')').trim();
+
+        if expr.starts_with("cmd('") && expr.ends_with("')") {
+            let cmd = expr[5..expr.len() - 2].to_string();
+            ConditionType::Command(cmd)
+        } else if clean_expr.starts_with('$') {
+            ConditionType::EnvVariable(clean_expr[1..].to_string())
+        } else {
+            ConditionType::Variable(clean_expr.to_string())
+        }
+    }
+
+    fn parse_comparison_expression(&self, expr: &str) -> String {
+        if expr.starts_with('\'') && expr.ends_with('\'') {
+            expr[1..expr.len() - 1].to_string()
+        } else if expr.starts_with('$') {
+            expr[1..].to_string()
+        } else {
+            expr.trim_matches('(').trim_matches(')').trim().to_string()
         }
     }
 

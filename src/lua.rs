@@ -225,9 +225,14 @@ impl LuaUserData for LuaSystem {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_function("uptime", |_, ()| Ok(sysinfo::System::uptime()));
 
-        methods.add_function("eval_with_stdout", |_, command: String| {
-            let output = Command::new("tish").arg("-H").arg("-c").arg(&command).output().map_err(LuaError::external)?;
-            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        methods.add_function("eval_to_str", |_, command: String| {
+            let mut parts = command.split_whitespace();
+
+            let program = parts.next().ok_or(LuaError::external("No command provided"))?;
+            let args: Vec<&str> = parts.collect();
+            let output = Command::new(program).args(&args).output().map_err(LuaError::external)?;
+
+            String::from_utf8(output.stdout).map_err(LuaError::external)
         });
 
         methods.add_function("timestamp", |_, ()| {
