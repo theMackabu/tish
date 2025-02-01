@@ -43,6 +43,8 @@ enum ConditionType {
     EnvVariable(String),
     Literal(String),
     Boolean(Box<ConditionType>),
+    Or(Vec<ConditionType>),
+    And(Vec<ConditionType>),
 }
 
 enum OperationParam {
@@ -477,14 +479,29 @@ impl<'c> Template<'c> {
     }
 
     fn parse_color_tag(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> TemplateToken {
-        let mut color = String::new();
+        let mut color_expr = String::new();
         let mut content = Vec::new();
         let mut in_name = true;
         let mut nested = String::new();
+        let mut brace_depth = 0;
+
+        chars.next();
+        if let Some('.') = chars.next() {}
 
         while let Some(c) = chars.next() {
             match c {
-                '>' if in_name => in_name = false,
+                '{' if in_name => {
+                    brace_depth += 1;
+                    color_expr.push(c);
+                }
+                '}' if in_name => {
+                    brace_depth -= 1;
+                    color_expr.push(c);
+                    if brace_depth == 0 {
+                        in_name = false;
+                    }
+                }
+                '>' if in_name && brace_depth == 0 => in_name = false,
                 '<' if !in_name => {
                     if chars.peek() == Some(&'/') {
                         while let Some(c) = chars.next() {
@@ -497,16 +514,27 @@ impl<'c> Template<'c> {
                         nested.push(c);
                     }
                 }
-                _ if in_name => {
-                    if c == 'c' && chars.peek() == Some(&'.') {
-                        chars.next();
-                        continue;
-                    }
-                    color.push(c);
-                }
+                _ if in_name => color_expr.push(c),
                 _ => nested.push(c),
             }
         }
+
+        let color = if color_expr.starts_with('{') {
+            let tokens = self.parse_tokens(&color_expr);
+            if let Some(TemplateToken::Conditional { if_body, else_body, .. }) = tokens.first() {
+                let mut context = ScopedContext::new();
+                let result = self.render_tokens_with_context(if_body, &mut context, &mut PendingUpdates::new());
+                if result.is_empty() && else_body.is_some() {
+                    self.render_tokens_with_context(else_body.as_ref().unwrap(), &mut context, &mut PendingUpdates::new())
+                } else {
+                    result
+                }
+            } else {
+                color_expr
+            }
+        } else {
+            color_expr
+        };
 
         if !nested.is_empty() {
             content = self.parse_tokens(&nested);
@@ -668,19 +696,37 @@ impl<'c> Template<'c> {
         }
     }
 
+    fn evaluate_boolean_condition(&self, condition: &ConditionType, context: &ScopedContext) -> bool {
+        self.resolve_condition_value(condition, context).map(|val| Self::is_truthy(&val)).unwrap_or(false)
+    }
+
     fn resolve_condition_value(&self, condition: &ConditionType, context: &ScopedContext) -> Option<String> {
         match condition {
             ConditionType::Command(cmd) => Some(self.execute_command(cmd)),
             ConditionType::Variable(name) => Some(context.get(name).unwrap_or_default()),
             ConditionType::EnvVariable(name) => Some(env::var(name).unwrap_or_default()),
             ConditionType::Literal(val) => Some(val.to_string()),
-            ConditionType::Boolean(_) => None,
+            ConditionType::Boolean(inner) => self.resolve_condition_value(inner, context).map(|val| Self::is_truthy(&val).to_string()),
+            ConditionType::Or(conditions) => Some(
+                conditions
+                    .iter()
+                    .any(|cond| self.resolve_condition_value(cond, context).map(|val| Self::is_truthy(&val)).unwrap_or(false))
+                    .to_string(),
+            ),
+            ConditionType::And(conditions) => Some(
+                conditions
+                    .iter()
+                    .all(|cond| self.resolve_condition_value(cond, context).map(|val| Self::is_truthy(&val)).unwrap_or(false))
+                    .to_string(),
+            ),
         }
     }
 
     fn evaluate_condition(&self, condition: &ConditionType, operator: &str, comparison: &str, context: &ScopedContext) -> bool {
         match condition {
-            ConditionType::Boolean(inner_condition) => self.resolve_condition_value(inner_condition, context).map(|value| Self::is_truthy(&value)).unwrap_or(false),
+            ConditionType::Or(conditions) => conditions.iter().any(|cond| self.evaluate_boolean_condition(cond, context)),
+            ConditionType::And(conditions) => conditions.iter().all(|cond| self.evaluate_boolean_condition(cond, context)),
+            ConditionType::Boolean(inner_condition) => self.evaluate_boolean_condition(inner_condition, context),
             _ => {
                 let value = self.resolve_condition_value(condition, context).unwrap_or_default();
 
@@ -874,6 +920,26 @@ impl<'c> Template<'c> {
     }
 
     fn parse_condition_expression(&self, expr: &str) -> ConditionType {
+        let parts = self.split_top_level_operator(expr, "||");
+
+        if parts.len() > 1 {
+            ConditionType::Or(parts.iter().map(|part| self.parse_and_expression(part)).collect())
+        } else {
+            self.parse_and_expression(expr)
+        }
+    }
+
+    fn parse_and_expression(&self, expr: &str) -> ConditionType {
+        let parts = self.split_top_level_operator(expr, "&&");
+
+        if parts.len() > 1 {
+            ConditionType::And(parts.iter().map(|part| self.parse_single_condition(part)).collect())
+        } else {
+            self.parse_single_condition(expr)
+        }
+    }
+
+    fn parse_single_condition(&self, expr: &str) -> ConditionType {
         let clean_expr = expr.trim_matches('(').trim_matches(')').trim();
 
         if expr.starts_with("cmd('") && expr.ends_with("')") {
@@ -889,6 +955,62 @@ impl<'c> Template<'c> {
         } else {
             ConditionType::Variable(clean_expr.to_string())
         }
+    }
+
+    fn split_top_level_operator(&self, expr: &str, operator: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut paren_depth = 0;
+        let mut chars = expr.chars().peekable();
+        let operator_chars: Vec<char> = operator.chars().collect();
+
+        while let Some(c) = chars.next() {
+            match c {
+                '(' => {
+                    paren_depth += 1;
+                    current.push(c);
+                }
+                ')' => {
+                    paren_depth -= 1;
+                    current.push(c);
+                }
+                c if paren_depth == 0 && c == operator_chars[0] => {
+                    let mut is_operator = true;
+                    let mut operator_buffer = vec![c];
+                    for expected_char in &operator_chars[1..] {
+                        if let Some(&next_char) = chars.peek() {
+                            if next_char == *expected_char {
+                                operator_buffer.push(next_char);
+                                chars.next();
+                            } else {
+                                is_operator = false;
+                                break;
+                            }
+                        } else {
+                            is_operator = false;
+                            break;
+                        }
+                    }
+
+                    if is_operator {
+                        if !current.is_empty() {
+                            parts.push(current.trim().to_string());
+                            current = String::new();
+                        }
+                    } else {
+                        current.push(c);
+                        current.extend(operator_buffer.iter().skip(1));
+                    }
+                }
+                _ => current.push(c),
+            }
+        }
+
+        if !current.is_empty() {
+            parts.push(current.trim().to_string());
+        }
+
+        parts
     }
 
     fn strip_quotes(s: &str) -> &str {
