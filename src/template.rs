@@ -42,6 +42,7 @@ enum ConditionType {
     Variable(String),
     EnvVariable(String),
     Literal(String),
+    Boolean(Box<ConditionType>),
 }
 
 enum OperationParam {
@@ -667,58 +668,72 @@ impl<'c> Template<'c> {
         }
     }
 
+    fn resolve_condition_value(&self, condition: &ConditionType, context: &ScopedContext) -> Option<String> {
+        match condition {
+            ConditionType::Command(cmd) => Some(self.execute_command(cmd)),
+            ConditionType::Variable(name) => Some(context.get(name).unwrap_or_default()),
+            ConditionType::EnvVariable(name) => Some(env::var(name).unwrap_or_default()),
+            ConditionType::Literal(val) => Some(val.to_string()),
+            ConditionType::Boolean(_) => None,
+        }
+    }
+
     fn evaluate_condition(&self, condition: &ConditionType, operator: &str, comparison: &str, context: &ScopedContext) -> bool {
-        let value = match condition {
-            ConditionType::Command(cmd) => self.execute_command(cmd),
-            ConditionType::Variable(name) => context.get(name).unwrap_or_default(),
-            ConditionType::EnvVariable(name) => env::var(name).unwrap_or_default(),
-            ConditionType::Literal(val) => val.to_string(),
-        };
+        match condition {
+            ConditionType::Boolean(inner_condition) => self.resolve_condition_value(inner_condition, context).map(|value| Self::is_truthy(&value)).unwrap_or(false),
+            _ => {
+                let value = self.resolve_condition_value(condition, context).unwrap_or_default();
 
-        let comparison_value = if comparison.starts_with('$') {
-            env::var(&comparison[1..]).unwrap_or_default()
-        } else {
-            let unquoted = Self::strip_quotes(comparison);
-            context.get(unquoted).unwrap_or(unquoted.to_string())
-        };
+                if operator == "is_truthy" {
+                    return Self::is_truthy(&value);
+                }
 
-        match operator {
-            "is_empty" => value.is_empty(),
-            "not_empty" => !value.is_empty(),
-
-            "equals" | "==" => value == comparison_value,
-            "not_equals" | "!=" => value != comparison_value,
-            "equals_ignore_case" | "ieq" => value.to_lowercase() == comparison_value.to_lowercase(),
-
-            "contains" | "includes" => value.contains(&comparison_value),
-            "not_contains" | "excludes" => !value.contains(&comparison_value),
-
-            "length_equals" => value.len() == comparison_value.parse().unwrap_or(0),
-            "length_greater" => value.len() > comparison_value.parse().unwrap_or(0),
-            "length_less" => value.len() < comparison_value.parse().unwrap_or(0),
-
-            "in" => comparison_value.split(',').map(str::trim).any(|x| x == value),
-            "not_in" => !comparison_value.split(',').map(str::trim).any(|x| x == value),
-
-            "is_number" => value.parse::<f64>().is_ok(),
-            "is_integer" => value.parse::<i64>().is_ok(),
-
-            "starts_with" => value.starts_with(&comparison_value),
-            "ends_with" => value.ends_with(&comparison_value),
-
-            "greater" | ">" => self.compare_values(&value, &comparison_value, |a, b| a > b),
-            "greater_equals" | ">=" => self.compare_values(&value, &comparison_value, |a, b| a >= b),
-            "less" | "<" => self.compare_values(&value, &comparison_value, |a, b| a < b),
-            "less_equals" | "<=" => self.compare_values(&value, &comparison_value, |a, b| a <= b),
-
-            "matches" => {
-                if let Ok(re) = Regex::new(&comparison_value) {
-                    re.is_match(&value)
+                let comparison_value = if comparison.starts_with('$') {
+                    env::var(&comparison[1..]).unwrap_or_default()
                 } else {
-                    false
+                    let unquoted = Self::strip_quotes(comparison);
+                    context.get(unquoted).unwrap_or(unquoted.to_string())
+                };
+
+                match operator {
+                    "is_empty" => value.is_empty(),
+                    "not_empty" => !value.is_empty(),
+
+                    "equals" | "==" => value == comparison_value,
+                    "not_equals" | "!=" => value != comparison_value,
+                    "equals_ignore_case" | "ieq" => value.to_lowercase() == comparison_value.to_lowercase(),
+
+                    "contains" | "includes" => value.contains(&comparison_value),
+                    "not_contains" | "excludes" => !value.contains(&comparison_value),
+
+                    "length_equals" => value.len() == comparison_value.parse().unwrap_or(0),
+                    "length_greater" => value.len() > comparison_value.parse().unwrap_or(0),
+                    "length_less" => value.len() < comparison_value.parse().unwrap_or(0),
+
+                    "in" => comparison_value.split(',').map(str::trim).any(|x| x == value),
+                    "not_in" => !comparison_value.split(',').map(str::trim).any(|x| x == value),
+
+                    "is_number" => value.parse::<f64>().is_ok(),
+                    "is_integer" => value.parse::<i64>().is_ok(),
+
+                    "starts_with" => value.starts_with(&comparison_value),
+                    "ends_with" => value.ends_with(&comparison_value),
+
+                    "greater" | ">" => self.compare_values(&value, &comparison_value, |a, b| a > b),
+                    "greater_equals" | ">=" => self.compare_values(&value, &comparison_value, |a, b| a >= b),
+                    "less" | "<" => self.compare_values(&value, &comparison_value, |a, b| a < b),
+                    "less_equals" | "<=" => self.compare_values(&value, &comparison_value, |a, b| a <= b),
+
+                    "matches" => {
+                        if let Ok(re) = Regex::new(&comparison_value) {
+                            re.is_match(&value)
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
                 }
             }
-            _ => false,
         }
     }
 
@@ -760,27 +775,12 @@ impl<'c> Template<'c> {
         compare_fn(&v1_normalized, &v2_normalized)
     }
 
-    fn parse_conditional(&self, content: &str) -> TemplateToken {
-        let condition_str = content.split('{').next().unwrap_or("").trim();
-        let parts = self.split_conditional_parts(condition_str);
-
-        if parts.len() < 3 {
-            return TemplateToken::Text(format!("{{if {} }}", condition_str));
-        }
-
-        let left_expr = parts[0].trim();
-        let operator = parts[1].trim().to_string();
-        let right_expr = parts[2].trim();
-
-        let condition = self.parse_condition_expression(left_expr);
-        let comparison = right_expr.trim_matches('(').trim_matches(')').trim().to_string();
-
-        let remaining = &content[condition_str.len()..];
-        let if_body_str = self.extract_block(remaining);
+    fn parse_conditional_bodies(&self, content: &str) -> (Vec<TemplateToken>, Option<Vec<TemplateToken>>) {
+        let if_body_str = self.extract_block(content);
         let if_body = self.parse_tokens(&if_body_str);
 
-        let else_body = if let Some(else_idx) = remaining[if_body_str.len()..].find("else") {
-            let else_content = &remaining[if_body_str.len() + else_idx + 4..];
+        let else_body = if let Some(else_idx) = content[if_body_str.len()..].find("else") {
+            let else_content = &content[if_body_str.len() + else_idx + 4..];
             if else_content.trim().starts_with('{') {
                 let else_str = self.extract_block(else_content);
                 Some(self.parse_tokens(&else_str))
@@ -790,6 +790,33 @@ impl<'c> Template<'c> {
         } else {
             None
         };
+
+        (if_body, else_body)
+    }
+
+    fn parse_conditional(&self, content: &str) -> TemplateToken {
+        let condition_str = content.split('{').next().unwrap_or("").trim();
+        let remaining = &content[condition_str.len()..];
+
+        let (condition, operator, comparison) = if !condition_str.contains(' ') {
+            (
+                ConditionType::Boolean(Box::new(self.parse_condition_expression(condition_str))),
+                String::from("is_truthy"),
+                String::new(),
+            )
+        } else {
+            let parts = self.split_conditional_parts(condition_str);
+            if parts.len() < 3 {
+                return TemplateToken::Text(format!("{{if {} }}", condition_str));
+            }
+            (
+                self.parse_condition_expression(parts[0].trim()),
+                parts[1].trim().to_string(),
+                parts[2].trim_matches('(').trim_matches(')').trim().to_string(),
+            )
+        };
+
+        let (if_body, else_body) = self.parse_conditional_bodies(remaining);
 
         TemplateToken::Conditional {
             condition,
@@ -869,6 +896,20 @@ impl<'c> Template<'c> {
             &s[1..s.len() - 1]
         } else {
             s
+        }
+    }
+
+    fn is_truthy(value: &str) -> bool {
+        match value.to_lowercase().as_str() {
+            "true" | "yes" | "1" | "on" => true,
+            "false" | "no" | "0" | "off" | "" => false,
+            other => {
+                if let Ok(num) = other.parse::<f64>() {
+                    num != 0.0
+                } else {
+                    !other.is_empty()
+                }
+            }
         }
     }
 
