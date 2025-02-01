@@ -1,4 +1,5 @@
 // TODO: make lua functions work in the green/red highlighter
+// also make env vars light green like #66CB33
 
 use std::{
     collections::HashMap,

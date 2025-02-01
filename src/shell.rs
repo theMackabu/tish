@@ -1,3 +1,4 @@
+pub mod git;
 pub mod highlight;
 pub mod signals;
 pub mod tokenizer;
@@ -112,6 +113,7 @@ impl TishShell {
 
         let tmpl = Template::new(&str);
         let envm = EnvManager::new(&path);
+        let git_info = git::get_info();
 
         tmpl.insert("host", host);
         tmpl.insert("pid", process::id().to_string());
@@ -122,15 +124,32 @@ impl TishShell {
         tmpl.insert("path-folder", envm.pretty_dir());
         tmpl.insert("path-short", envm.condensed_path());
 
-        tmpl.insert("in-git-repo", git2::Repository::discover(".").is_ok().to_string());
+        if git_info.in_repo {
+            println!("{git_info:#?}");
 
-        tmpl.insert(
-            "git-branch",
-            git2::Repository::discover(".")
-                .ok()
-                .and_then(|repo| repo.head().ok().and_then(|h| h.shorthand().map(ToString::to_string)))
-                .unwrap_or_default(),
-        );
+            tmpl.insert("git.in-repo", true.to_string());
+            tmpl.insert("git.branch", git_info.branch_name);
+            tmpl.insert("git.ahead", git_info.ahead);
+            tmpl.insert("git.behind", git_info.behind);
+            tmpl.insert("git.branch.status", git_info.branch_status);
+            tmpl.insert("git.stash.count", git_info.stash_count);
+
+            tmpl.insert("git.working.display", git_info.working.status_string);
+            tmpl.insert("git.working.unmerged", git_info.working.unmerged);
+            tmpl.insert("git.working.deleted", git_info.working.deleted);
+            tmpl.insert("git.working.added", git_info.working.added);
+            tmpl.insert("git.working.modified", git_info.working.modified);
+            tmpl.insert("git.working.untracked", git_info.working.untracked);
+            tmpl.insert("git.working.changed", git_info.working.changed.to_string());
+
+            tmpl.insert("git.staging.display", git_info.staging.status_string);
+            tmpl.insert("git.staging.unmerged", git_info.staging.unmerged);
+            tmpl.insert("git.staging.deleted", git_info.staging.deleted);
+            tmpl.insert("git.staging.added", git_info.staging.added);
+            tmpl.insert("git.staging.modified", git_info.staging.modified);
+            tmpl.insert("git.staging.untracked", git_info.staging.untracked);
+            tmpl.insert("git.staging.changed", git_info.staging.changed.to_string());
+        }
 
         tmpl.insert(
             "prompt",
