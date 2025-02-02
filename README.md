@@ -35,7 +35,9 @@ tish -L             # Login shell (loads .tish_profile)
 
 ### Prompt Customization
 
-Tish uses a powerful templating system for prompt customization. The default prompt template is:
+Tish uses a powerful templating system for prompt customization. For detailed information about all templating features, see the [full prompt documentation](PROMPT.md).
+
+The default prompt template is:
 
 ```
 {user}@{host} {path} {prompt}

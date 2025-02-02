@@ -265,6 +265,242 @@ Completed Tasks:
 }}
 ```
 
+# Additional Tish Features
+
+## Default Values
+
+Variables can be assigned default values using the colon syntax. This is useful when you want to provide a fallback value for undefined variables:
+
+```
+{undefined_var:'default'}  # Shows 'default' if undefined_var is not set
+{status:'pending'}        # Shows value of status if defined, otherwise 'pending'
+```
+
+Multiple default values can be used in a single line:
+
+```
+{first:'one'} and {second:'two'}
+```
+
+Default values can be used in various contexts:
+
+```
+# In conditionals
+{if status:'pending' equals 'pending' {
+    <s.yellow>Waiting</s>
+} else {
+    <s.red>Error</s>
+}}
+
+# In style tags
+<s.{color:'blue'}>Default blue text</s>
+
+# With string operations
+{input:'test.txt' | split('.', 1)}
+```
+
+Default values are also triggered by empty strings:
+
+```
+{let empty = ''}
+{empty:'was empty'}  # Shows 'was empty'
+```
+
+## Boolean Context and Operations
+
+### Implicit Boolean Handling
+
+Empty strings are treated as falsy in boolean contexts, while non-empty strings are truthy:
+
+```
+{let empty_str = ''}
+
+# Empty string is falsy
+{if empty_str {
+    This won't show
+} else {
+    This will show
+}}
+
+# Negation of empty string
+{if !empty_str {
+    This will show
+}}
+```
+
+### Boolean Operations
+
+Boolean operations can be combined using standard logical operators:
+
+```
+{let connected = true}
+{let authorized = true}
+
+# Using AND (&&)
+{if connected && authorized {
+    Full access granted
+}}
+
+# Using OR (||)
+{if cpu greater 90 || ram greater 95 {
+    Critical state
+}}
+
+# Complex combinations
+{if (connected && authorized) || admin_override {
+    Access granted
+}}
+```
+
+## Advanced String Operations
+
+### Operation Chaining
+
+Multiple string operations can be chained together using the pipe operator:
+
+```
+# Multiple transformations
+{let text = 'Hello, World! 123'}
+{let result = text | match('\w+', 0) | replace('Hello', 'Hi')}
+
+# Complex regex with capture groups
+{let log = '[ERROR] Failed to connect (port 8080)'}
+{let error_code = log | match('\[(\w+)\].*port (\d+)', 2)}
+
+# Multiple replacements
+{let text = 'a,b,c'}
+{let formatted = text | replace(',', ' | ') | replace('a', 'A') | replace('c', 'C')}
+```
+
+### Conditional String Operations
+
+String operations can be used within conditional statements:
+
+```
+{let path = '/home/user/file.txt'}
+{let filename = path | split('/', -1)}
+{let ext = if filename | match('\.(\w+)$', 1) equals 'txt' {
+    <s.green>text file</s>
+} else {
+    <s.yellow>other file</s>
+}}
+```
+
+## Partial File Inclusion
+
+You can include content from external files using the partial inclusion syntax:
+
+```
+# Include entire file
+{>template.txt}
+
+# Usage in larger template
+Header content here
+{>header.partial}
+Main content here
+{>footer.partial}
+```
+
+## Conditional Variable Assignment
+
+Variables can be assigned conditionally using if-else expressions:
+
+### Basic Conditional Assignment
+
+```
+{let count = 75}
+{let status = if count greater 50 {high} else {low}}
+```
+
+### Nested Conditional Assignment
+
+```
+{let temp = 85}
+{let status = if temp greater 90 {
+    critical
+} else if temp greater 80 {
+    warning
+} else if temp greater 70 {
+    normal
+} else {
+    low
+}}
+```
+
+### Multiple Variable Dependencies
+
+```
+{let cpu = 80}
+{let ram = 90}
+{let system_status = if cpu greater 90 || ram greater 95 {
+    critical
+} else if cpu greater 80 || ram greater 85 {
+    warning
+} else {
+    normal
+}}
+```
+
+### Style Integration
+
+Conditional assignments can be used to determine styles:
+
+```
+{let value = 75}
+{let status_color = if value greater 80 {
+    red
+} else if value greater 60 {
+    yellow
+} else {
+    green
+}}
+<s.{status_color}>Value: {value}%</s>
+```
+
+### Environment-Based Configuration
+
+```
+{let env_mode = $MODE}
+{let config = if env_mode equals 'production' {
+    prod.config
+} else if env_mode equals 'staging' {
+    staging.config
+} else {
+    dev.config
+}}
+```
+
+## Best Practices for Advanced Features
+
+1. **Default Values**
+
+   - Use meaningful default values that make sense in the context
+   - Consider using default values for optional configurations
+   - Document expected default behaviors in your templates
+
+2. **Boolean Operations**
+
+   - Keep boolean expressions simple and readable
+   - Break complex conditions into smaller, assigned variables
+   - Use parentheses to make operation precedence clear
+
+3. **String Operations**
+
+   - Chain operations in a logical order
+   - Use meaningful variable names for intermediate results
+   - Consider breaking very long chains into multiple steps
+
+4. **Conditional Assignments**
+
+   - Use clear, descriptive variable names
+   - Break complex conditions into smaller parts
+   - Consider using constants for important thresholds
+
+5. **Partial Inclusion**
+   - Keep partials focused and single-purpose
+   - Use consistent naming conventions for partial files
+   - Document dependencies between partials
+
 ## Debugging Tips
 
 1. Use simple strings first, then add complexity
