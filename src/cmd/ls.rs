@@ -155,19 +155,20 @@ fn print_standard_entries(entries: &[Entry]) -> std::io::Result<()> {
         return Ok(());
     }
 
-    let terminal_width = match dimensions() {
-        Some((w, _)) => w,
-        None => 80,
-    };
-
     let max_name_len = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
     let min_col_width = max_name_len + 3;
+
+    let terminal_width = match dimensions() {
+        Some((w, _)) if w >= min_col_width => w,
+        _ => min_col_width,
+    };
+
     let num_columns = std::cmp::max(1, terminal_width / min_col_width);
     let num_rows = (entries.len() + num_columns - 1) / num_columns;
 
     let mut column_widths = vec![0; num_columns];
     for (idx, entry) in entries.iter().enumerate() {
-        let col = idx / num_rows;
+        let col = idx % num_columns;
         if col < num_columns {
             column_widths[col] = std::cmp::max(column_widths[col], entry.name.len() + 3);
         }
@@ -175,7 +176,7 @@ fn print_standard_entries(entries: &[Entry]) -> std::io::Result<()> {
 
     for row in 0..num_rows {
         for col in 0..num_columns {
-            let idx = col * num_rows + row;
+            let idx = row * num_columns + col;
             if idx >= entries.len() {
                 break;
             }
