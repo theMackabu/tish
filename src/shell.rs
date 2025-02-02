@@ -134,7 +134,6 @@ impl TishShell {
             tmpl.insert("git.stash.count", git_info.stash_count);
 
             tmpl.insert("git.working.display", git_info.working.status_string);
-            tmpl.insert("git.working.unmerged", git_info.working.unmerged);
             tmpl.insert("git.working.deleted", git_info.working.deleted);
             tmpl.insert("git.working.added", git_info.working.added);
             tmpl.insert("git.working.modified", git_info.working.modified);
@@ -142,7 +141,6 @@ impl TishShell {
             tmpl.insert("git.working.changed", git_info.working.changed.to_string());
 
             tmpl.insert("git.staging.display", git_info.staging.status_string);
-            tmpl.insert("git.staging.unmerged", git_info.staging.unmerged);
             tmpl.insert("git.staging.deleted", git_info.staging.deleted);
             tmpl.insert("git.staging.added", git_info.staging.added);
             tmpl.insert("git.staging.modified", git_info.staging.modified);
@@ -159,7 +157,7 @@ impl TishShell {
             .to_string(),
         );
 
-        Ok(tmpl.render())
+        Ok(tmpl.render()?)
     }
 
     async fn execute_command(&mut self, line: &String) -> ExitCode {

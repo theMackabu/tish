@@ -4,6 +4,7 @@ edition = "2021"
 version = "0.5.0-pre.2"
 license = "GPL-3.0"
 description = "A tiny, fast shell with not so tiny features"
+repository = "https://github.com/theMackabu/tish"
 
 [[bin]]
 name = "tish"
@@ -18,10 +19,12 @@ libc = "0.2.169"
 nix = "0.29.0"
 parking_lot = "0.12.3"
 regex = "1.11.1"
+serde_json = "1.0.138"
 sysinfo = "0.33.1"
 
 tokio = { version = "1.43.0", features = ["full"] }
 clap = { version = "4.5.27", features = ["derive"] }
+serde = { version = "1.0.217", features = ["derive"] }
 git2 = { version = "0.20.0", default-features = false }
 rustyline = { version = "15.0.0", features = ["custom-bindings", "with-fuzzy"] }
 

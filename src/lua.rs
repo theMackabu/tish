@@ -297,7 +297,7 @@ impl LuaState {
         cfg_table.set("auto_cd", true)?;
         cfg_table.set("use_tish_ls", false)?;
         cfg_table.set("show_hidden", false)?;
-        cfg_table.set("prompt", "{t.user}@{t.host} {t.cwd} {t.prompt} ")?;
+        cfg_table.set("prompt", "{user}@{host} {path} {prompt}{' '}")?;
 
         let config = Some(lua.create_registry_value(cfg_table)?);
         let state = Self { lua, config };

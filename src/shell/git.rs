@@ -2,7 +2,6 @@ use git2::{Repository, StatusOptions};
 
 pub struct GitStatusInfo {
     pub changed: bool,
-    pub unmerged: String,
     pub deleted: String,
     pub added: String,
     pub modified: String,
@@ -14,7 +13,6 @@ impl Default for GitStatusInfo {
     fn default() -> Self {
         Self {
             changed: false,
-            unmerged: String::new(),
             deleted: String::new(),
             added: String::new(),
             modified: String::new(),
@@ -69,7 +67,7 @@ impl GitInfo {
         if status_parts.is_empty() {
             String::new()
         } else {
-            format!(" {}", status_parts.join(" "))
+            format!(" {} ", status_parts.join(" "))
         }
     }
 }
@@ -207,7 +205,7 @@ pub fn get_info() -> GitInfo {
             working_parts.push(format!("-{}", working_status.deleted));
         }
 
-        working_status.status_string = if !working_parts.is_empty() { format!(" {}", working_parts.join(" ")) } else { String::new() };
+        working_status.status_string = working_parts.join(" ");
 
         let mut staging_parts = Vec::new();
         if !staging_status.added.is_empty() {
@@ -220,7 +218,7 @@ pub fn get_info() -> GitInfo {
             staging_parts.push(format!("-{}", staging_status.deleted));
         }
 
-        staging_status.status_string = if !staging_parts.is_empty() { format!(" {}", staging_parts.join(" ")) } else { String::new() };
+        staging_status.status_string = staging_parts.join(" ");
     }
 
     git_info.working = working_status;
@@ -238,7 +236,7 @@ pub fn get_info() -> GitInfo {
         count
     };
 
-    git_info.stash_count = if stash_count > 0 { stash_count.to_string() } else { String::new() };
+    git_info.stash_count = if stash_count > 0 { stash_count.to_string() } else { String::from("0") };
 
     return git_info;
 }
