@@ -21,6 +21,65 @@ Variables are referenced using curly braces:
 {const MAX = '100'}     # Constant declaration
 ```
 
+### Arrays and Maps
+
+Arrays:
+
+```
+{let colors = ['red', 'green', 'blue']}
+{colors[1]}  # Access second element (green)
+```
+
+Maps:
+
+```
+{let users = [
+    {'name': 'Alice', 'age': 25},
+    {'name': 'Bob', 'age': 30}
+]}
+{users[0].name}  # Access first user's name (Alice)
+```
+
+### Loops
+
+Basic array loop:
+
+```
+{let colors = ['red', 'green', 'blue']}
+{for color in colors {
+    Color: {color}{' '}
+}}
+```
+
+Loop with index:
+
+```
+{let colors = ['red', 'green', 'blue']}
+{for color, i in colors {
+    {i}: {color}{' '}
+}}
+```
+
+Range-based loop:
+
+```
+{for i in 1..5 {
+    Count: {i}{' '}
+}}
+```
+
+Loop over maps:
+
+```
+{let users = [
+    {'name': 'Alice', 'age': 25},
+    {'name': 'Bob', 'age': 30}
+]}
+{for user in users {
+    Name: {user.name}, Age: {user.age}{' '}
+}}
+```
+
 ### Conditionals
 
 Basic if statement:
@@ -147,9 +206,19 @@ Style tags can be used to format output:
 
 3. **Modular Templates**
    Break complex templates into smaller, reusable parts using variables:
+
    ```
    {let status_color = if status equals 'error' {red} else {green}}
    <s.{status_color}>{message}</s>
+   ```
+
+4. **Efficient Loops**
+   When working with loops, consider collecting data first:
+   ```
+   {let filtered_users = users | filter('status', 'active')}
+   {for user in filtered_users {
+       {user.name}{' '}
+   }}
    ```
 
 ## Common Use Cases
@@ -180,6 +249,22 @@ Style tags can be used to format output:
 </s>
 ```
 
+### Data Processing
+
+```
+{let items = [
+    {'name': 'Task 1', 'status': 'done'},
+    {'name': 'Task 2', 'status': 'pending'}
+]}
+
+Completed Tasks:
+{for item in items {
+    {if item.status equals 'done' {
+        • {item.name}{'\n'}
+    }}
+}}
+```
+
 ## Debugging Tips
 
 1. Use simple strings first, then add complexity
@@ -187,3 +272,5 @@ Style tags can be used to format output:
 3. Verify variable values with direct output
 4. Check syntax nesting with matching braces
 5. Use consistent spacing for readability
+6. Test loops with small datasets first
+7. Verify map/array access with single elements before looping
