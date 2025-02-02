@@ -67,7 +67,7 @@ impl GitInfo {
         if status_parts.is_empty() {
             String::new()
         } else {
-            format!(" {} ", status_parts.join(" "))
+            format!("{} ", status_parts.join(" "))
         }
     }
 }
