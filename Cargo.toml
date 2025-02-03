@@ -28,6 +28,7 @@ clap = { version = "4.5.27", features = ["derive"] }
 serde = { version = "1.0.217", features = ["derive"] }
 git2 = { version = "0.20.0", default-features = false }
 rustyline = { version = "15.0.0", features = ["custom-bindings", "with-fuzzy"] }
+dashmap = "6.1.0"
 
 [dependencies.mlua]
 version = "0.10.2"

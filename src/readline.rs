@@ -112,6 +112,7 @@ impl TishHelper {
         }
 
         if !dirs_only {
+            completions.extend((*crate::LUA_FN).iter().filter(|r| r.key().starts_with(word)).map(|r| r.key().clone()));
             completions.extend(self.get_history_matches(word, ctx.history()));
         }
 

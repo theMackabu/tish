@@ -1,11 +1,12 @@
 mod modules;
 
 use crate::prelude::*;
+use dashmap::DashSet;
 use libc::pid_t;
 use mlua::prelude::*;
 
 use std::{
-    env,
+    env::{self, consts},
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Command, ExitCode},
@@ -259,9 +260,9 @@ impl LuaUserData for LuaSystem {
 
     fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
         fields.add_field_function_get("hostname", |_, _| Ok(hostname::get()?.to_string_lossy().to_string()));
-        fields.add_field_function_get("os_type", |_, _| Ok(env::consts::OS.to_string()));
-        fields.add_field_function_get("os_arch", |_, _| Ok(env::consts::ARCH.to_string()));
-        fields.add_field_function_get("os_family", |_, _| Ok(env::consts::FAMILY.to_string()));
+        fields.add_field_function_get("os_type", |_, _| Ok(consts::OS.to_string()));
+        fields.add_field_function_get("os_arch", |_, _| Ok(consts::ARCH.to_string()));
+        fields.add_field_function_get("os_family", |_, _| Ok(consts::FAMILY.to_string()));
 
         fields.add_field_function_get("boot_time", |_, _| {
             Ok(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64 - sysinfo::System::uptime() as i64)
@@ -343,11 +344,38 @@ impl LuaState {
     }
 
     pub fn eval_file(&self, path: &std::path::Path) -> anyhow::Result<std::process::ExitCode> {
+        let initial_funcs: DashSet<String> = {
+            let globals = self.lua.globals().get::<LuaTable>("_G").unwrap();
+            globals
+                .pairs::<String, LuaValue>()
+                .filter_map(|pair| match pair {
+                    Ok((name, LuaValue::Function(_))) => Some(name),
+                    _ => None,
+                })
+                .collect()
+        };
+
         let mut code = std::fs::read_to_string(path)?;
         if code.starts_with("#!") {
             code = code.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or(code);
         }
-        self.eval(&code)
+
+        self.eval(&code)?;
+
+        if path.ends_with(".tishrc") {
+            if let Ok(globals) = self.lua.globals().get::<LuaTable>("_G") {
+                crate::LUA_FN.clear();
+                for pair in globals.pairs::<String, LuaValue>() {
+                    if let Ok((name, LuaValue::Function(_))) = pair {
+                        if !initial_funcs.contains(&name) {
+                            crate::LUA_FN.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(ExitCode::SUCCESS)
     }
 
     pub fn get_config_value<T: FromLua>(&self, key: &str) -> anyhow::Result<T> {

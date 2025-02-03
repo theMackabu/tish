@@ -13,6 +13,7 @@ mod tty;
 
 use anyhow::Result;
 use args::{Parser, TishArgs};
+use dashmap::DashSet;
 use jobs::JobManager;
 use shell::TishShell;
 
@@ -25,6 +26,7 @@ use std::{
 type AliasMap = HashMap<String, String>;
 
 lazy_lock! {
+    pub static LUA_FN: Arc<DashSet<String>> = Arc::new(DashSet::new());
     pub static JOBS: Arc<Mutex<JobManager>> = Arc::new(Mutex::new(JobManager::new()));
     pub static ALIASES: Arc<Mutex<AliasMap>> = Arc::new(Mutex::new(AliasMap::new()));
 }
