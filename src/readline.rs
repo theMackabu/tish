@@ -104,17 +104,20 @@ impl TishHelper {
 
         if word.starts_with("~/") {
             if let Some(home) = dirs::home_dir() {
-                let parent = if word == "~/" {
-                    home.clone()
-                } else {
+                let replace_path = |path: &str| {
                     let home_str = home.to_string_lossy();
-                    let search_path = word.replace("~/", &format!("{}/", home_str));
-                    PathBuf::from(&search_path).parent().unwrap_or(&home).to_path_buf()
+                    path.replace("~/", &format!("{}/", home_str))
+                };
+
+                let parent = match word {
+                    "~/" => home.clone(),
+                    path if path.ends_with('/') => PathBuf::from(replace_path(path)),
+                    path => PathBuf::from(replace_path(path)).parent().unwrap_or(&home).to_path_buf(),
                 };
 
                 if let Ok(entries) = fs::read_dir(&parent) {
                     let search_name = match word {
-                        "~/" => String::new(),
+                        w if w == "~/" || w.ends_with('/') => String::new(),
                         _ => PathBuf::from(word).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
                     };
 
