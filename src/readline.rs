@@ -122,7 +122,7 @@ impl TishHelper {
                     };
 
                     let matches = entries
-                        .filter_map(|entry| entry.ok())
+                        .filter_map(Result::ok)
                         .filter(|entry| {
                             entry.file_name().to_str().map_or(false, |name| {
                                 let is_hidden = name.starts_with(".");
@@ -155,9 +155,17 @@ impl TishHelper {
             let (dir_path, file_prefix) = word.rsplit_once('/').map_or((".", word), |(d, f)| (d, f));
 
             if let Ok(entries) = fs::read_dir(dir_path) {
-                let mut matches: Vec<_> = entries.filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().starts_with(file_prefix)).collect();
-
-                matches.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned());
+                let matches: Vec<_> = entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| {
+                        entry.file_name().to_str().map_or(false, |name| {
+                            let is_hidden = name.starts_with(".");
+                            let show_hidden = file_prefix.starts_with(".");
+                            name.starts_with(file_prefix) && (!is_hidden || show_hidden)
+                        })
+                    })
+                    .collect::<Vec<DirEntry>>()
+                    .tap(|matches| matches.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned()));
 
                 for entry in matches {
                     let completion = if dir_path == "." {
