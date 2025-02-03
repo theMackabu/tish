@@ -102,28 +102,28 @@ impl TishHelper {
                     path.replace("~/", &format!("{}/", home_str))
                 };
 
-                let parent = match word {
-                    "~/" => home.clone(),
-                    path if path.ends_with('/') => PathBuf::from(replace_path(path)),
-                    path => PathBuf::from(replace_path(path)).parent().unwrap_or(&home).to_path_buf(),
-                };
+                let replaced = PathBuf::from(replace_path(word));
+                let parent = if replaced.is_dir() { replaced } else { replaced.parent().unwrap_or(&home).to_path_buf() };
 
                 if let Ok(entries) = fs::read_dir(&parent) {
                     let search_name = match word {
                         w if w == "~/" || w.ends_with('/') => String::new(),
+                        w if w == "~/." || w.ends_with("/.") => ".".to_string(),
                         _ => PathBuf::from(word).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
                     };
 
                     let matches = entries
                         .filter_map(Result::ok)
                         .filter(|entry| {
-                            entry.file_name().to_str().map_or(false, |name| {
+                            if let Some(name) = entry.file_name().to_str() {
                                 let is_hidden = name.starts_with(".");
-                                let is_home_path = word.starts_with("~/.");
+                                let allow_hidden = search_name.starts_with(".");
                                 let matches_search = name.starts_with(&search_name);
 
-                                matches_search && (!is_hidden || is_home_path)
-                            })
+                                matches_search && (!is_hidden || allow_hidden)
+                            } else {
+                                false
+                            }
                         })
                         .collect::<Vec<DirEntry>>()
                         .tap(|matches| matches.sort_by(|a, b| a.file_name().cmp(&b.file_name())));
