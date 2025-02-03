@@ -164,11 +164,9 @@ impl TishHelper {
                     if let Ok(stripped) = path.strip_prefix(&home) {
                         let completion = format!("~/{}", stripped.to_string_lossy());
                         if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                            if !completion.ends_with('/') {
-                                completions.push(format!("{}/", completion));
-                            } else {
-                                completions.push(completion);
-                            }
+                            completions.push(format!("{}/", completion));
+                        } else if !dirs_only {
+                            completions.push(completion);
                         }
                     }
                 }
