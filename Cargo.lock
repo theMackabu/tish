@@ -1118,6 +1118,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pat"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b253cdae1f0d013c50bb4e00f79c1a751df2a28860cb0750f6d414de34c7215d"
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1628,6 +1634,7 @@ dependencies = [
  "mlua",
  "nix 0.29.0",
  "parking_lot",
+ "pat",
  "regex",
  "rustyline",
  "serde",

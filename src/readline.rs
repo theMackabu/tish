@@ -3,12 +3,14 @@
 use crate::shell::highlight;
 use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
+use pat::Tap;
 use tokio::sync::mpsc;
 
 use std::{
     collections::{HashMap, HashSet},
-    env, fs,
-    path::Path,
+    env,
+    fs::{self, DirEntry},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -102,26 +104,45 @@ impl TishHelper {
 
         if word.starts_with("~/") {
             if let Some(home) = dirs::home_dir() {
-                let home_str = home.to_string_lossy();
-                let search_path = word.replace("~/", &format!("{}/", home_str));
-                let dir_path = Path::new(&search_path);
-                let parent = dir_path.parent().unwrap_or(dir_path);
+                let parent = if word == "~/" {
+                    home.clone()
+                } else {
+                    let home_str = home.to_string_lossy();
+                    let search_path = word.replace("~/", &format!("{}/", home_str));
+                    PathBuf::from(&search_path).parent().unwrap_or(&home).to_path_buf()
+                };
 
-                if let Ok(entries) = fs::read_dir(parent) {
-                    let search_name = dir_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                if let Ok(entries) = fs::read_dir(&parent) {
+                    let search_name = match word {
+                        "~/" => String::new(),
+                        _ => PathBuf::from(word).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+                    };
 
-                    let mut matches: Vec<_> = entries.filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().starts_with(&search_name)).collect();
+                    let matches = entries
+                        .filter_map(|entry| entry.ok())
+                        .filter(|entry| {
+                            entry.file_name().to_str().map_or(false, |name| {
+                                let is_hidden = name.starts_with(".");
+                                let is_home_path = word.starts_with("~/.");
+                                let matches_search = name.starts_with(&search_name);
 
-                    matches.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+                                matches_search && (!is_hidden || is_home_path)
+                            })
+                        })
+                        .collect::<Vec<DirEntry>>()
+                        .tap(|matches| matches.sort_by(|a, b| a.file_name().cmp(&b.file_name())));
 
                     for entry in matches {
                         let path = entry.path();
+
                         if let Ok(stripped) = path.strip_prefix(&home) {
                             let completion = format!("~/{}", stripped.to_string_lossy());
                             if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                                completions.push(format!("{}/", completion));
-                            } else {
-                                completions.push(completion);
+                                if !completion.ends_with('/') {
+                                    completions.push(format!("{}/", completion));
+                                } else {
+                                    completions.push(completion);
+                                }
                             }
                         }
                     }
