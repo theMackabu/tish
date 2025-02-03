@@ -88,17 +88,12 @@ impl TishHelper {
 
     fn get_completions(&self, input: &str, ctx: &Context<'_>) -> Vec<String> {
         let mut completions = Vec::new();
+
+        let commands = ["cd", "exit", "help", "?", "source", "echo", "tish"];
         let (_, word) = input.rsplit_once(char::is_whitespace).map_or(("", input), |(p, w)| (p, w));
 
-        let history_matches = self.get_history_matches(word, ctx.history());
-        completions.extend(history_matches);
-
-        if !completions.is_empty() {
-            return completions;
-        }
-
-        if word.is_empty() || ["cd", "exit", "help", "?", "source", "echo", "tish"].iter().any(|cmd| cmd.starts_with(word)) {
-            for cmd in ["cd", "exit", "help", "?", "source", "echo", "tish"] {
+        if word.is_empty() || commands.iter().any(|cmd| cmd.starts_with(word)) {
+            for cmd in commands {
                 if cmd.starts_with(word) {
                     completions.push(cmd.to_string());
                 }
@@ -181,9 +176,13 @@ impl TishHelper {
             }
         }
 
+        let history_matches = self.get_history_matches(word, ctx.history());
+        completions.extend(history_matches);
+
         completions.sort();
         completions.dedup();
-        completions
+
+        return completions;
     }
 }
 
