@@ -70,7 +70,8 @@ impl TishShell {
         }
 
         if let Some(line) = args.arguments {
-            if let Err(_) = shell.lua.eval(&line) {
+            let fmt_lua = LuaState::transform_lua(&line);
+            if let Err(_) = shell.lua.eval(&fmt_lua) {
                 let status = shell.execute_command(&line).await;
                 let raw_code = unsafe { std::mem::transmute::<ExitCode, u8>(status) };
                 process::exit(raw_code as i32);
@@ -198,7 +199,8 @@ impl TishShell {
         let mut status = ExitCode::SUCCESS;
 
         if let Some(line) = self.args.command.to_owned() {
-            if let Err(_) = self.lua.eval(&line) {
+            let fmt_lua = LuaState::transform_lua(&line);
+            if let Err(_) = self.lua.eval(&fmt_lua) {
                 status = self.execute_command(&line).await;
             }
         }
@@ -215,7 +217,8 @@ impl TishShell {
                 readline = self.readline.async_readline(&prompt) => {
                     match readline {
                         Ok(line) => {
-                            if let Err(_) = self.lua.eval(&line) {
+                            let fmt_lua = LuaState::transform_lua(&line);
+                            if let Err(_) = self.lua.eval(&fmt_lua) {
                                 self.execute_command(&line).await;
                             }
                         }

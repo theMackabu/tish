@@ -395,4 +395,20 @@ impl LuaState {
             anyhow::bail!("Config not initialized")
         }
     }
+
+    pub fn transform_lua(input: &str) -> String {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        if parts.is_empty() {
+            return input.to_string();
+        }
+
+        let func = parts[0].to_string();
+        let args = parts[1..]
+            .iter()
+            .map(|s| if s.parse::<f64>().is_ok() { s.to_string() } else { format!("\"{}\"", s) })
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        format!("{}({})", func, args)
+    }
 }
