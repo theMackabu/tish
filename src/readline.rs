@@ -91,16 +91,9 @@ impl TishHelper {
     fn get_completions(&self, input: &str, ctx: &Context<'_>) -> Vec<String> {
         let mut completions = Vec::new();
 
-        let commands = ["cd", "exit", "help", "?", "source", "echo", "tish"];
-        let (_, word) = input.rsplit_once(char::is_whitespace).map_or(("", input), |(p, w)| (p, w));
-
-        if word.is_empty() || commands.iter().any(|cmd| cmd.starts_with(word)) {
-            for cmd in commands {
-                if cmd.starts_with(word) {
-                    completions.push(cmd.to_string());
-                }
-            }
-        }
+        let commands = ["cd", "ls", "exit", "help", "?", "source", "echo", "tish"];
+        let (cmd, word) = input.split_once(char::is_whitespace).map_or(("", input), |(c, w)| (c, w));
+        let dirs_only_cmd = cmd == "cd" || cmd == "ls";
 
         if word.starts_with("~/") {
             if let Some(home) = dirs::home_dir() {
@@ -168,20 +161,19 @@ impl TishHelper {
                     .tap(|matches| matches.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned()));
 
                 for entry in matches {
-                    let completion = if dir_path == "." {
-                        entry.file_name().to_string_lossy().into_owned()
-                    } else {
-                        format!("{}/{}", dir_path, entry.file_name().to_string_lossy())
-                    };
+                    let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 
-                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                        completions.push(format!("{}/", completion));
-                    } else {
-                        completions.push(completion);
+                    if !dirs_only_cmd || is_dir {
+                        let completion = if dir_path == "." {
+                            entry.file_name().to_string_lossy().into_owned()
+                        } else {
+                            format!("{}/{}", dir_path, entry.file_name().to_string_lossy())
+                        };
+                        completions.push(if is_dir { format!("{}/", completion) } else { completion });
                     }
                 }
             }
-        } else {
+        } else if !dirs_only_cmd {
             if let Ok(paths) = env::var("PATH") {
                 for path in env::split_paths(&paths) {
                     if let Ok(entries) = fs::read_dir(path) {
@@ -194,28 +186,22 @@ impl TishHelper {
                     }
                 }
             }
-
-            if let Ok(entries) = fs::read_dir(".") {
-                let mut matches: Vec<_> = entries.filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().starts_with(word)).collect();
-
-                matches.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-
-                for entry in matches {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                        completions.push(format!("{}/", name));
-                    } else {
-                        completions.push(name);
-                    }
-                }
-            }
         }
 
-        let history_matches = self.get_history_matches(word, ctx.history());
-        completions.extend(history_matches);
+        if !dirs_only_cmd {
+            completions.extend(self.get_history_matches(word, ctx.history()));
+        }
 
         completions.sort();
         completions.dedup();
+
+        if completions.is_empty() {
+            for cmd in commands {
+                if cmd.starts_with(word) {
+                    completions.push(cmd.to_string());
+                }
+            }
+        }
 
         return completions;
     }
