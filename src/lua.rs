@@ -407,14 +407,14 @@ impl LuaState {
         let rest = parts.next().unwrap_or("").trim();
 
         if rest.is_empty() {
-            return func.to_string();
+            return format!("{func}()");
         }
 
         if rest.contains('(') && rest.contains(')') {
-            return format!("{}({})", func, rest);
+            return format!("{func}({rest})");
         }
 
         let args = rest.split_whitespace().collect::<Vec<&str>>().join(", ");
-        format!("{}({})", func, args)
+        format!("{func}({args})")
     }
 }
