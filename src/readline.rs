@@ -1,5 +1,3 @@
-// TODO prefer built in commands over binaries
-
 use crate::shell::highlight;
 use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
@@ -93,117 +91,120 @@ impl TishHelper {
 
         let commands = ["cd", "ls", "exit", "help", "?", "source", "echo", "tish"];
         let (cmd, word) = input.split_once(char::is_whitespace).map_or(("", input), |(c, w)| (c, w));
-        let dirs_only_cmd = cmd == "cd" || cmd == "ls";
+        let dirs_only = cmd == "cd" || cmd == "ls";
 
         if word.starts_with("~/") {
-            if let Some(home) = dirs::home_dir() {
-                let replace_path = |path: &str| {
-                    let home_str = home.to_string_lossy();
-                    path.replace("~/", &format!("{}/", home_str))
-                };
+            Self::get_home_completions(&mut completions, word, dirs_only)
+        } else if word.contains('/') || dirs_only {
+            Self::get_path_completions(&mut completions, word, dirs_only)
+        } else {
+            Self::get_path_completions(&mut completions, word, dirs_only);
 
-                let replaced = PathBuf::from(replace_path(word));
-                let parent = if replaced.is_dir() { replaced } else { replaced.parent().unwrap_or(&home).to_path_buf() };
-
-                if let Ok(entries) = fs::read_dir(&parent) {
-                    let search_name = match word {
-                        w if w == "~/" || w.ends_with('/') => String::new(),
-                        w if w == "~/." || w.ends_with("/.") => ".".to_string(),
-                        _ => PathBuf::from(word).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
-                    };
-
-                    let matches = entries
-                        .filter_map(Result::ok)
-                        .filter(|entry| {
-                            if let Some(name) = entry.file_name().to_str() {
-                                let is_hidden = name.starts_with(".");
-                                let allow_hidden = search_name.starts_with(".");
-                                let matches_search = name.starts_with(&search_name);
-
-                                matches_search && (!is_hidden || allow_hidden)
-                            } else {
-                                false
-                            }
-                        })
-                        .collect::<Vec<DirEntry>>()
-                        .tap(|matches| matches.sort_by(|a, b| a.file_name().cmp(&b.file_name())));
-
-                    for entry in matches {
-                        let path = entry.path();
-
-                        if let Ok(stripped) = path.strip_prefix(&home) {
-                            let completion = format!("~/{}", stripped.to_string_lossy());
-                            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                                if !completion.ends_with('/') {
-                                    completions.push(format!("{}/", completion));
-                                } else {
-                                    completions.push(completion);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else if word.contains('/') || !word.starts_with('~') {
-            let (dir_path, file_prefix) = word.rsplit_once('/').map_or((".", word), |(d, f)| (d, f));
-
-            if let Ok(entries) = fs::read_dir(dir_path) {
-                let matches: Vec<_> = entries
-                    .filter_map(Result::ok)
-                    .filter(|entry| {
-                        entry.file_name().to_str().map_or(false, |name| {
-                            let is_hidden = name.starts_with(".");
-                            let show_hidden = file_prefix.starts_with(".");
-                            name.starts_with(file_prefix) && (!is_hidden || show_hidden)
-                        })
-                    })
-                    .collect::<Vec<DirEntry>>()
-                    .tap(|matches| matches.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned()));
-
-                for entry in matches {
-                    let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-
-                    if !dirs_only_cmd || is_dir {
-                        let completion = if dir_path == "." {
-                            entry.file_name().to_string_lossy().into_owned()
-                        } else {
-                            format!("{}/{}", dir_path, entry.file_name().to_string_lossy())
-                        };
-                        completions.push(if is_dir { format!("{}/", completion) } else { completion });
-                    }
-                }
-            }
-        } else if !dirs_only_cmd {
             if let Ok(paths) = env::var("PATH") {
-                for path in env::split_paths(&paths) {
-                    if let Ok(entries) = fs::read_dir(path) {
-                        for entry in entries.filter_map(Result::ok) {
-                            let name = entry.file_name().to_string_lossy().to_string();
-                            if name.starts_with(word) {
-                                completions.push(name);
-                            }
-                        }
-                    }
-                }
+                env::split_paths(&paths)
+                    .filter_map(|path| fs::read_dir(path).ok())
+                    .flatten()
+                    .filter_map(Result::ok)
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .filter(|name| name.starts_with(word))
+                    .for_each(|name| completions.push(name));
             }
         }
 
-        if !dirs_only_cmd {
+        if !dirs_only {
             completions.extend(self.get_history_matches(word, ctx.history()));
+        }
+
+        if completions.is_empty() {
+            completions.extend(commands.iter().filter(|cmd| cmd.starts_with(word)).map(ToString::to_string));
         }
 
         completions.sort();
         completions.dedup();
 
-        if completions.is_empty() {
-            for cmd in commands {
-                if cmd.starts_with(word) {
-                    completions.push(cmd.to_string());
+        return completions;
+    }
+
+    fn get_home_completions(completions: &mut Vec<String>, word: &str, dirs_only: bool) {
+        if let Some(home) = dirs::home_dir() {
+            let replace_path = |path: &str| {
+                let home_str = home.to_string_lossy();
+                path.replace("~/", &format!("{}/", home_str))
+            };
+
+            let replaced = PathBuf::from(replace_path(word));
+            let parent = if replaced.is_dir() { replaced } else { replaced.parent().unwrap_or(&home).to_path_buf() };
+
+            if let Ok(entries) = fs::read_dir(&parent) {
+                let search_name = match word {
+                    w if w == "~/" || w.ends_with('/') => String::new(),
+                    w if w == "~/." || w.ends_with("/.") => ".".to_string(),
+                    _ => PathBuf::from(word).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+                };
+
+                let matches = entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| {
+                        if let Some(name) = entry.file_name().to_str() {
+                            let is_hidden = name.starts_with(".");
+                            let allow_hidden = search_name.starts_with(".");
+                            let matches_search = name.starts_with(&search_name);
+
+                            matches_search && (!is_hidden || allow_hidden)
+                        } else {
+                            false
+                        }
+                    })
+                    .collect::<Vec<DirEntry>>()
+                    .tap(|matches| matches.sort_by(|a, b| a.file_name().cmp(&b.file_name())));
+
+                for entry in matches {
+                    let path = entry.path();
+
+                    if let Ok(stripped) = path.strip_prefix(&home) {
+                        let completion = format!("~/{}", stripped.to_string_lossy());
+                        if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                            if !completion.ends_with('/') {
+                                completions.push(format!("{}/", completion));
+                            } else {
+                                completions.push(completion);
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
 
-        return completions;
+    fn get_path_completions(completions: &mut Vec<String>, word: &str, dirs_only: bool) {
+        let (dir_path, file_prefix) = word.rsplit_once('/').map_or((".", word), |(d, f)| (d, f));
+
+        if let Ok(entries) = fs::read_dir(dir_path) {
+            let matches: Vec<_> = entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry.file_name().to_str().map_or(false, |name| {
+                        let is_hidden = name.starts_with(".");
+                        let show_hidden = file_prefix.starts_with(".");
+                        name.starts_with(file_prefix) && (!is_hidden || show_hidden)
+                    })
+                })
+                .collect::<Vec<DirEntry>>()
+                .tap(|matches| matches.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned()));
+
+            for entry in matches {
+                let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+
+                if !dirs_only || is_dir {
+                    let completion = if dir_path == "." {
+                        entry.file_name().to_string_lossy().into_owned()
+                    } else {
+                        format!("{}/{}", dir_path, entry.file_name().to_string_lossy())
+                    };
+                    completions.push(if is_dir { format!("{}/", completion) } else { completion });
+                }
+            }
+        }
     }
 }
 
