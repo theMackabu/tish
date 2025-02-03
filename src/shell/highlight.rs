@@ -1,5 +1,5 @@
-// TODO: make lua functions work in the green/red highlighter
-// also make env vars light green like #66CB33
+// TODO: Highlight variables after the initial $
+// like $HOME/path should all be green
 
 use std::{
     collections::HashMap,
@@ -43,7 +43,7 @@ impl Highlighter {
         styles.insert(TokenType::InvalidCommand, "\x1b[31m".to_string());
         styles.insert(TokenType::Argument, "\x1b[0m".to_string());
         styles.insert(TokenType::Option, "\x1b[36m".to_string());
-        styles.insert(TokenType::Variable, "\x1b[35m".to_string());
+        styles.insert(TokenType::Variable, "\x1b[38;2;102;203;51m".to_string());
         styles.insert(TokenType::Directory, "\x1b[4;35m".to_string());
         styles.insert(TokenType::ImplicitDirectory, "\x1b[4;35m".to_string());
         styles.insert(TokenType::String, "\x1b[33m".to_string());
@@ -56,12 +56,20 @@ impl Highlighter {
     }
 
     pub fn command_exists(&self, command: &str) -> bool {
-        if matches!(command, "cd" | "exit" | "help" | "?" | "source" | "echo" | "tish") {
+        if matches!(command, "cd" | "ls" | "exit" | "help" | "?" | "source" | "echo" | "tish") {
             return true;
         }
 
         if Path::new(command).is_absolute() {
             return Path::new(command).exists();
+        }
+
+        if (*crate::LUA_FN).contains(command) {
+            return true;
+        }
+
+        if crate::ALIASES.lock().expect("Unable to acquire alias lock").contains_key(command) {
+            return true;
         }
 
         if let Ok(paths) = env::var("PATH") {

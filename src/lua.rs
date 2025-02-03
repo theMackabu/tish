@@ -1,7 +1,6 @@
 mod modules;
 
 use crate::prelude::*;
-use dashmap::DashSet;
 use libc::pid_t;
 use mlua::prelude::*;
 
@@ -344,16 +343,17 @@ impl LuaState {
     }
 
     pub fn eval_file(&self, path: &std::path::Path) -> anyhow::Result<std::process::ExitCode> {
-        let initial_funcs: DashSet<String> = {
-            let globals = self.lua.globals().get::<LuaTable>("_G").unwrap();
-            globals
-                .pairs::<String, LuaValue>()
-                .filter_map(|pair| match pair {
-                    Ok((name, LuaValue::Function(_))) => Some(name),
-                    _ => None,
-                })
-                .collect()
-        };
+        // TODO: make a way to prefix all the global builtins other than print
+        // let initial_funcs: DashSet<String> = {
+        //     let globals = self.lua.globals().get::<LuaTable>("_G").unwrap();
+        //     globals
+        //         .pairs::<String, LuaValue>()
+        //         .filter_map(|pair| match pair {
+        //             Ok((name, LuaValue::Function(_))) => Some(name),
+        //             _ => None,
+        //         })
+        //         .collect()
+        // };
 
         let mut code = std::fs::read_to_string(path)?;
         if code.starts_with("#!") {
@@ -367,9 +367,10 @@ impl LuaState {
                 crate::LUA_FN.clear();
                 for pair in globals.pairs::<String, LuaValue>() {
                     if let Ok((name, LuaValue::Function(_))) = pair {
-                        if !initial_funcs.contains(&name) {
-                            crate::LUA_FN.insert(name);
-                        }
+                        // if !initial_funcs.contains(&name) {
+                        //     crate::LUA_FN.insert(name);
+                        // }
+                        crate::LUA_FN.insert(name);
                     }
                 }
             }
@@ -397,18 +398,23 @@ impl LuaState {
     }
 
     pub fn transform_lua(input: &str) -> String {
-        let parts: Vec<&str> = input.split_whitespace().collect();
-        if parts.is_empty() {
+        if input.trim().is_empty() {
             return input.to_string();
         }
 
-        let func = parts[0].to_string();
-        let args = parts[1..]
-            .iter()
-            .map(|s| if s.parse::<f64>().is_ok() { s.to_string() } else { format!("\"{}\"", s) })
-            .collect::<Vec<String>>()
-            .join(", ");
+        let mut parts = input.splitn(2, ' ');
+        let func = parts.next().unwrap_or("");
+        let rest = parts.next().unwrap_or("").trim();
 
+        if rest.is_empty() {
+            return func.to_string();
+        }
+
+        if rest.contains('(') && rest.contains(')') {
+            return format!("{}({})", func, rest);
+        }
+
+        let args = rest.split_whitespace().collect::<Vec<&str>>().join(", ");
         format!("{}({})", func, args)
     }
 }
