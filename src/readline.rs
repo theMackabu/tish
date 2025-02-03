@@ -151,7 +151,7 @@ impl TishHelper {
                     }
                 }
             }
-        } else if word.contains('/') || word.starts_with('.') {
+        } else if word.contains('/') || !word.starts_with('~') {
             let (dir_path, file_prefix) = word.rsplit_once('/').map_or((".", word), |(d, f)| (d, f));
 
             if let Ok(entries) = fs::read_dir(dir_path) {
@@ -160,8 +160,11 @@ impl TishHelper {
                 matches.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().into_owned());
 
                 for entry in matches {
-                    let path = entry.path();
-                    let completion = path.to_string_lossy().into_owned();
+                    let completion = if dir_path == "." {
+                        entry.file_name().to_string_lossy().into_owned()
+                    } else {
+                        format!("{}/{}", dir_path, entry.file_name().to_string_lossy())
+                    };
 
                     if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                         completions.push(format!("{}/", completion));
