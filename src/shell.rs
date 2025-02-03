@@ -1,3 +1,4 @@
+pub mod alias;
 pub mod git;
 pub mod highlight;
 pub mod signals;
@@ -70,6 +71,7 @@ impl TishShell {
         }
 
         if let Some(line) = args.arguments {
+            let line = alias::resolve_command(line);
             let fmt_lua = LuaState::transform_lua(&line);
             if let Err(_) = shell.lua.eval(&fmt_lua) {
                 let status = shell.execute_command(&line).await;
@@ -199,7 +201,9 @@ impl TishShell {
         let mut status = ExitCode::SUCCESS;
 
         if let Some(line) = self.args.command.to_owned() {
+            let line = alias::resolve_command(line);
             let fmt_lua = LuaState::transform_lua(&line);
+
             if let Err(_) = self.lua.eval(&fmt_lua) {
                 status = self.execute_command(&line).await;
             }
@@ -217,7 +221,9 @@ impl TishShell {
                 readline = self.readline.async_readline(&prompt) => {
                     match readline {
                         Ok(line) => {
+                            let line = alias::resolve_command(line);
                             let fmt_lua = LuaState::transform_lua(&line);
+
                             if let Err(_) = self.lua.eval(&fmt_lua) {
                                 self.execute_command(&line).await;
                             }

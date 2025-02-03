@@ -173,7 +173,7 @@ impl TishCommand {
     }
 
     async fn spawn_foreground_job(&self, signal_handler: &SignalHandler) -> Result<ExitCode> {
-        let command = self.resolve_command();
+        let command = TishCommand::parse(&self.program);
 
         let mut cmd = tokio::process::Command::new(&command[0].program);
         cmd.args(&command[0].args).args(&self.args);
@@ -299,13 +299,6 @@ impl TishCommand {
 
         env::set_current_dir(&target_dir).map_err(|_| anyhow!("cd: no such file or directory: {}", target_dir.display()))?;
         Ok(ExitCode::SUCCESS)
-    }
-
-    fn resolve_command(&self) -> Vec<Self> {
-        let alias = crate::ALIASES.lock().expect("Able to acquire alias lock");
-        let line = alias.get(&self.program).map(String::to_owned).unwrap_or_else(|| self.program.to_owned());
-
-        TishCommand::parse(&line)
     }
 
     fn parse_single_command(mut tokenizer: Tokenizer) -> Self {
